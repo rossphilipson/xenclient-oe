@@ -8,9 +8,8 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/qemu-dm-${PV_MAJOR}.${PV_MINOR}:"
 
 require qemu-dm.inc
 
-# only stubdom specific patches in here, common patches belong in qemu-dm.inc
-SRC_URI += " \
-            file://qemu-ifup-stubdom \
+# only stubdom specific files in here, no patcher. Patches belong in qemu-dm.inc
+SRC_URI += " file://qemu-ifup-stubdom \
             "
 
 EXTRA_OECONF += " --audio-drv-list=openxt --enable-openxt-stubdom --enable-openxt-iso "
