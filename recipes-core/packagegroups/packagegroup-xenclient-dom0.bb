@@ -86,6 +86,7 @@ RDEPENDS_${PN} = " \
     xenclient-language-sync \
     atapi-pt-helper \
     audio-helper \
+    qmp-helper \
     compleat \
     xec \
     apptool \
