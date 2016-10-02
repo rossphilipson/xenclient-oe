@@ -1,0 +1,351 @@
+Index: tboot-1.8.3/tboot/Makefile
+===================================================================
+--- tboot-1.8.3.orig/tboot/Makefile
++++ tboot-1.8.3/tboot/Makefile
+@@ -25,6 +25,7 @@ obj-y += txt/acmod.o txt/errors.o txt/he
+ obj-y += txt/verify.o txt/vmcs.o
+ obj-y += common/tpm_12.o common/tpm_20.o 
+ obj-y += common/sha256.o
++obj-y += common/precalc.o
+ 
+ OBJS := $(obj-y)
+ 
+Index: tboot-1.8.3/tboot/common/precalc.c
+===================================================================
+--- /dev/null
++++ tboot-1.8.3/tboot/common/precalc.c
+@@ -0,0 +1,254 @@
++/*
++ * Copyright (c) 2015 Daniel P. Smith
++ * All rights reserved.
++ * Copyright (c) 20016 Assured Information Security, Inc
++ *
++ * Authors:
++ * Ross Philipson <philipsonr@ainfosec.com>
++ * Daniel P. Smith <dpsmith@apertussolutions.com>
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ *
++ *   * Redistributions of source code must retain the above copyright
++ *     notice, this list of conditions and the following disclaimer.
++ *   * Redistributions in binary form must reproduce the above
++ *     copyright notice, this list of conditions and the following
++ *     disclaimer in the documentation and/or other materials provided
++ *     with the distribution.
++ *   * Neither the name of the Intel Corporation nor the names of its
++ *     contributors may be used to endorse or promote products derived
++ *     from this software without specific prior written permission.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
++ * OF THE POSSIBILITY OF SUCH DAMAGE.
++ *
++ */
++
++#include <config.h>
++#include <stdbool.h>
++#include <types.h>
++#include <printk.h>
++#include <compiler.h>
++#include <string.h>
++#include <misc.h>
++#include <page.h>
++#include <multiboot.h>
++#include <uuid.h>
++#include <loader.h>
++#include <e820.h>
++#include <hash.h>
++#include <tboot.h>
++#include <mle.h>
++#include <txt/config_regs.h>
++#include <txt/mtrrs.h>
++#include <txt/heap.h>
++#include <txt/acmod.h>
++
++#define SINIT_MLE_DATA_VER7 7
++
++/* If SINIT to MLE data table versions < 8 */
++#define V7_BUFFER_SIZE 76
++
++/* SINIT to MLE data table versions >= 8 */
++#define V8_BUFFER_SIZE 80
++
++#define MEASURE_OS_SINT 1<<2
++
++#define BUF_APPEND(d, s, l) do { memcpy(d,s,l); d += l; } while (0)
++#define BUF_Z_APPEND(d, l) do { memset(d,0,l); d += l; } while (0)
++
++/* MLE/kernel shared data page (in boot.S) */
++extern tboot_shared_t _tboot_shared;
++
++extern unsigned long get_tboot_mem_end(void);
++
++/* DEBUG TODO remove */
++extern void print_acm_hdr(const acm_hdr_t *hdr, const char *mod_name);
++
++static bool find_scratch_location(loader_ctx *lctx, uint32_t size,
++                                  uint32_t *buffer)
++{
++    uint32_t location = (uint32_t)PAGE_UP(get_tboot_mem_end());
++    uint32_t next;
++    uint64_t ram_base = 0, ram_size = 0, top;
++
++    /* Find the extent of the RAM area where tboot lives */
++    if (!get_ram_region(location, &ram_base, &ram_size)) {
++        printk("precalc: RAM range for TBOOT module not found: failure");
++        return false;
++    }
++    top = ram_base + ram_size;
++
++    if (top < TBOOT_BASE_ADDR || top > 0x100000000ULL) {
++        printk("precalc: RAM extent for TBOOT module invalid: %Lx", top);
++        return false;
++    }
++
++    while (location < top) {
++        next = get_free_location(lctx, location, size);
++        if (next == location) {
++            memset((void *)location, 0, size);
++            *buffer = location;
++            return true;
++        }
++
++        location = next;
++    }
++
++    /* Note this routine should not fail unless there are some extreme
++     * memory layout problems or shortages on this system.
++     */
++    return false;
++}
++void setup_precalc(loader_ctx *lctx)
++{
++    txt_heap_t *txt_heap;
++    acm_hdr_t *hdr = g_sinit;
++    sinit_mle_data_t *sinit_mle_data;
++    os_sinit_data_t *os_sinit_data;
++    size_t user_size, hdr_size, abuf_size, hbuf_size, max_size;
++    uint32_t loc;
++    uint8_t *buf, *ptr;
++    tb_hash_t hashb;
++    bool ret;
++
++    /* DEBUG TODO remove */
++    printk(TBOOT_INFO"**** SETUP_PRECALC ****\n");
++    print_acm_hdr(g_sinit, "FINAL SINIT");
++
++    /* Set the MLE data version to an invalid value until everything completes
++     * successfully.
++     */
++    _tboot_shared.sinit_mle_data_ver = ~0;
++
++    txt_heap = get_txt_heap();
++    sinit_mle_data = get_sinit_mle_data_start(txt_heap);
++    os_sinit_data = get_os_sinit_data_start(txt_heap);
++
++    /* The hash consist of the first 128 bytes of the header, the user
++     * area of the AC module and the SINIT flags in the EDX register
++     */
++    hdr_size = offsetof(acm_hdr_t, rsa2048_pubkey);
++    user_size = (hdr->size*4) - (hdr->user_area - (uint8_t *)hdr);
++
++    /* Should not need extensive ACM validation at this point - it has been
++     * validated and used to do a measured launch.
++     *
++     * Calculate the ACM buffer size
++     */
++    abuf_size = hdr_size + user_size;
++
++    /* Calculate the heap buffer size */
++    hbuf_size = sinit_mle_data->version <= SINIT_MLE_DATA_VER7 ? \
++                V7_BUFFER_SIZE : V8_BUFFER_SIZE;
++
++    /* Need a scratch buffer to do the work in; use my earlier work for
++     * relocating modules to get a free block of RAM. Make a buffer big enough
++     * for all the work here.
++     */
++    max_size = abuf_size > hbuf_size ? abuf_size : hbuf_size;
++    if (!find_scratch_location(lctx, max_size, &loc)) {
++        printk(TBOOT_ERR": precalc failed - no memory??\n");
++        return;
++    }
++
++    memset(&hashb, 0, sizeof(tb_hash_t));
++    ptr = buf = (uint8_t*)loc;
++    memset(ptr, 0, max_size);
++    memcpy(ptr, hdr, hdr_size);
++    ptr += hdr_size;
++    memcpy(ptr, hdr->user_area, user_size);
++
++    if (sinit_mle_data->version > SINIT_MLE_DATA_VER7)
++        ret = hash_buffer(buf, abuf_size, &hashb ,TB_HALG_SHA256);
++    else
++        ret = hash_buffer(buf, abuf_size, &hashb ,TB_HALG_SHA1);
++
++    if (!ret) {
++        printk(TBOOT_ERR": precalc failed initial ACM hash\n");
++        goto out;
++    }
++
++    memset(buf, 0, abuf_size);
++    ptr = buf;
++    abuf_size = 0;
++
++    if (sinit_mle_data->version > SINIT_MLE_DATA_VER7) {
++        memcpy(buf, hashb.sha256, sizeof(hashb.sha256));
++        abuf_size += sizeof(hashb.sha256);
++    }
++    else {
++        memcpy(buf, hashb.sha1, sizeof(hashb.sha1));
++        abuf_size += sizeof(hashb.sha1);
++    }
++    ptr += abuf_size;
++
++    memcpy(ptr, &(sinit_mle_data->edx_senter_flags), sizeof(uint32_t));
++    abuf_size += sizeof(uint32_t);
++
++    ret = hash_buffer(buf, abuf_size, &hashb, TB_HALG_SHA1);
++    if (!ret) {
++        printk(TBOOT_ERR": precalc failed ACM hash\n");
++        goto out;
++    }
++
++    /* Copy the result to the shared data area */
++    memcpy(_tboot_shared.acm_hash, &hashb.sha1, sizeof(hashb.sha1));
++
++    /* DEBUG TODO remove */
++    printk(TBOOT_INFO"**** PRECALC_ACM_HASH ****\n");
++    print_hash(&hashb, TB_HALG_SHA1);
++
++    /* Calculate the TXT heap hash */
++    memset(&hashb, 0, sizeof(tb_hash_t));
++    ptr = buf = (uint8_t*)loc;
++    memset(ptr, 0, max_size);
++
++    BUF_APPEND(ptr, &sinit_mle_data->bios_acm_id, sizeof(sha1_hash_t));
++    BUF_APPEND(ptr, &sinit_mle_data->mseg_valid, sizeof(uint64_t));
++    BUF_APPEND(ptr, &sinit_mle_data->stm_hash, sizeof(sha1_hash_t));
++    BUF_APPEND(ptr, &sinit_mle_data->lcp_policy_control, sizeof(uint32_t));
++    BUF_APPEND(ptr, &sinit_mle_data->lcp_policy_hash, sizeof(sha1_hash_t));
++
++    if (sinit_mle_data->lcp_policy_control & MEASURE_OS_SINT)
++        BUF_APPEND(ptr, &os_sinit_data->capabilities._raw, sizeof(uint32_t));
++    else
++        BUF_Z_APPEND(ptr, 4);
++
++    if (sinit_mle_data->version > SINIT_MLE_DATA_VER7)
++        BUF_APPEND(ptr, &sinit_mle_data->proc_scrtm_status, sizeof(uint32_t));
++
++    ret = hash_buffer(buf, hbuf_size, &hashb, TB_HALG_SHA1);
++    if (!ret) {
++        printk(TBOOT_ERR": precalc failed TXT heap hash\n");
++        goto out;
++    }
++
++    /* Copy the result to the shared data area */
++    memcpy(_tboot_shared.txt_hash, &hashb.sha1, sizeof(hashb.sha1));
++
++    /* DEBUG TODO remove */
++    printk(TBOOT_INFO"**** PRECALC_HEAP_HASH ****\n");
++    print_hash(&hashb, TB_HALG_SHA1);
++
++    /* Final move, set the real MLE data version */
++    _tboot_shared.sinit_mle_data_ver = sinit_mle_data->version;
++
++out:
++    /* Final scrub of the scratch area */
++    ptr = buf = (uint8_t*)loc;
++    memset(ptr, 0, max_size);
++
++}
+Index: tboot-1.8.3/tboot/common/tboot.c
+===================================================================
+--- tboot-1.8.3.orig/tboot/common/tboot.c
++++ tboot-1.8.3/tboot/common/tboot.c
+@@ -75,6 +75,7 @@ extern bool set_policy(void);
+ extern void verify_all_modules(loader_ctx *lctx);
+ extern void verify_all_nvindices(void);
+ extern void apply_policy(tb_error_t error);
++extern void setup_precalc(loader_ctx *lctx);
+ void s3_launch(void);
+ 
+ /* counter timeout for waiting for all APs to exit guests */
+@@ -260,6 +261,7 @@ static void post_launch(void)
+     else if ( get_tboot_mwait() ) {
+         printk(TBOOT_ERR"ap_wake_mwait specified but the CPU doesn't support it.\n");
+     }
++    setup_precalc(g_ldr_ctx);
+ 
+     print_tboot_shared(&_tboot_shared);
+ 
+Index: tboot-1.8.3/include/tboot.h
+===================================================================
+--- tboot-1.8.3.orig/include/tboot.h
++++ tboot-1.8.3/include/tboot.h
+@@ -110,6 +110,10 @@ typedef struct __packed {
+     uint32_t  flags;
+     uint64_t  ap_wake_addr;      /* phys addr of kernel/VMM SIPI vector */
+     uint32_t  ap_wake_trigger;   /* kernel/VMM writes APIC ID to wake AP */
++    /* precalc region */
++    uint32_t  sinit_mle_data_ver;
++    uint8_t   acm_hash[20];
++    uint8_t   txt_hash[20];
+ } tboot_shared_t;
+ 
+ #define TB_SHUTDOWN_REBOOT      0
+Index: tboot-1.8.3/tboot/txt/acmod.c
+===================================================================
+--- tboot-1.8.3.orig/tboot/txt/acmod.c
++++ tboot-1.8.3/tboot/txt/acmod.c
+@@ -291,7 +291,8 @@ void print_txt_caps(const char *prefix,
+     printk(TBOOT_DETA"%s    max_phy_addr: %d\n", prefix, caps.max_phy_addr);
+ }
+ 
+-static void print_acm_hdr(const acm_hdr_t *hdr, const char *mod_name)
++/* DEBUG TODO remove these changes */
++void print_acm_hdr(const acm_hdr_t *hdr, const char *mod_name)
+ {
+     acm_info_table_t *info_table;
+ 
+Index: tboot-1.8.3/tboot/common/loader.c
+===================================================================
+--- tboot-1.8.3.orig/tboot/common/loader.c
++++ tboot-1.8.3/tboot/common/loader.c
+@@ -1916,6 +1916,13 @@ static uint32_t location_available(multi
+     return location;
+ }
+ 
++uint32_t get_free_location(loader_ctx *lctx, uint32_t location,
++                           uint32_t length)
++{
++    return location_available((multiboot_info_t *)lctx->addr,
++                              location, length);
++}
++
+ /*
+  * Attempt to move the module into a valid RAM area near other
+  * modules.
+Index: tboot-1.8.3/tboot/include/loader.h
+===================================================================
+--- tboot-1.8.3.orig/tboot/include/loader.h
++++ tboot-1.8.3/tboot/include/loader.h
+@@ -82,6 +82,8 @@ extern bool verify_modules(loader_ctx *l
+ extern module_t *get_module(loader_ctx *lctx, unsigned int i);
+ extern unsigned int get_module_count(loader_ctx *lctx);
+ extern bool remove_txt_modules(loader_ctx *lctx);
++extern uint32_t get_free_location(loader_ctx *lctx, uint32_t location,
++                                  uint32_t length);
+ extern void adjust_modules(loader_ctx *lctx);
+ 
+ extern bool	have_loader_memlimits(loader_ctx *lctx);
