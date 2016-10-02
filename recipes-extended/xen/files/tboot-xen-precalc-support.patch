@@ -1,0 +1,199 @@
+Index: xen-4.6.1/xen/include/asm-x86/tboot.h
+===================================================================
+--- xen-4.6.1.orig/xen/include/asm-x86/tboot.h
++++ xen-4.6.1/xen/include/asm-x86/tboot.h
+@@ -102,6 +102,10 @@ typedef struct __packed {
+     uint32_t  flags;
+     uint64_t  ap_wake_addr;      /* phys addr of kernel/VMM SIPI vector */
+     uint32_t  ap_wake_trigger;   /* kernel/VMM writes APIC ID to wake AP */
++    /* precalc region */
++    uint32_t  sinit_mle_data_ver;
++    uint8_t   acm_hash[20];
++    uint8_t   txt_hash[20];
+ } tboot_shared_t;
+ 
+ #define TB_SHUTDOWN_REBOOT      0
+Index: xen-4.6.1/xen/include/public/txt.h
+===================================================================
+--- /dev/null
++++ xen-4.6.1/xen/include/public/txt.h
+@@ -0,0 +1,65 @@
++/******************************************************************************
++ * txt.h
++ *
++ * Control domain TXT precalc services.
++ *
++ * Copyright (c) 20016 Assured Information Security, Inc
++ *
++ * Authors:
++ * Ross Philipson <philipsonr@ainfosec.com>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to
++ * deal in the Software without restriction, including without limitation the
++ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
++ * sell copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#ifndef __XEN_PUBLIC_TXT_H__
++#define __XEN_PUBLIC_TXT_H__
++
++#include "xen.h"
++
++/* version of ABI */
++#define TXT_SPEC_VERSION          1
++
++/*
++ * Return TXT pre-calculated infomation to the conctrol for forward sealing
++ * caclulations.
++ *
++ * @arg == pointer to xen_txt_precalc_t output structure.
++ */
++#define TXTOP_precalc    0
++
++struct xen_txt_precalc {
++    /* OUT */
++    uint32_t  sinit_mle_data_ver;
++    uint8_t   acm_hash[20];
++    uint8_t   txt_hash[20];
++};
++typedef struct xen_txt_precalc xen_txt_precalc_t;
++DEFINE_XEN_GUEST_HANDLE(xen_txt_precalc_t);
++
++#endif /* __XEN_PUBLIC_TXT_H__ */
++
++/*
++ * Local variables:
++ * mode: C
++ * c-file-style: "BSD"
++ * c-basic-offset: 4
++ * tab-width: 4
++ * indent-tabs-mode: nil
++ * End:
++ */
+Index: xen-4.6.1/xen/arch/x86/tboot.c
+===================================================================
+--- xen-4.6.1.orig/xen/arch/x86/tboot.c
++++ xen-4.6.1/xen/arch/x86/tboot.c
+@@ -13,6 +13,9 @@
+ #include <asm/e820.h>
+ #include <asm/tboot.h>
+ #include <crypto/vmac.h>
++#include <xen/guest_access.h>
++#include <xen/hypercall.h>
++#include <public/txt.h>
+ 
+ /* tboot=<physical address of shared page> */
+ static unsigned long __initdata opt_tboot_pa;
+@@ -546,6 +549,33 @@ int tboot_wake_ap(int apicid, unsigned l
+     return 1;
+ }
+ 
++long do_txt_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg)
++{
++    long ret = 0;
++
++    switch (cmd) {
++    case TXTOP_precalc: {
++        struct xen_txt_precalc precalc;
++
++        /* Add XSM check here */
++
++        /* Load in the precalc values */
++        precalc.sinit_mle_data_ver = g_tboot_shared->sinit_mle_data_ver;
++        memcpy(&precalc.acm_hash[0], &g_tboot_shared->acm_hash[0], 20);
++        memcpy(&precalc.txt_hash[0], &g_tboot_shared->txt_hash[0], 20);
++
++        if ( copy_to_guest(arg, &precalc, 1) )
++            ret = -EFAULT;
++
++        break;
++    }
++    default:
++        ret = -ENOSYS;
++    }
++
++    return ret;
++}
++
+ /*
+  * Local variables:
+  * mode: C
+Index: xen-4.6.1/xen/include/public/xen.h
+===================================================================
+--- xen-4.6.1.orig/xen/include/public/xen.h
++++ xen-4.6.1/xen/include/public/xen.h
+@@ -102,6 +102,7 @@ DEFINE_XEN_GUEST_HANDLE(xen_ulong_t);
+ #define __HYPERVISOR_tmem_op              38
+ #define __HYPERVISOR_v4v_op               39 /* reserved for XenClient */
+ #define __HYPERVISOR_xenpmu_op            40
++#define __HYPERVISOR_txt_op               41
+ 
+ /* Architecture-specific hypercall definitions. */
+ #define __HYPERVISOR_arch_0               48
+Index: xen-4.6.1/xen/include/xen/hypercall.h
+===================================================================
+--- xen-4.6.1.orig/xen/include/xen/hypercall.h
++++ xen-4.6.1/xen/include/xen/hypercall.h
+@@ -143,6 +143,9 @@ do_xenoprof_op(int op, XEN_GUEST_HANDLE_
+ extern long
+ do_xenpmu_op(unsigned int op, XEN_GUEST_HANDLE_PARAM(xen_pmu_params_t) arg);
+ 
++extern long
++do_txt_op(unsigned int cmd, XEN_GUEST_HANDLE_PARAM(void) arg);
++
+ #ifdef CONFIG_COMPAT
+ 
+ extern int
+Index: xen-4.6.1/xen/arch/x86/x86_64/compat/entry.S
+===================================================================
+--- xen-4.6.1.orig/xen/arch/x86/x86_64/compat/entry.S
++++ xen-4.6.1/xen/arch/x86/x86_64/compat/entry.S
+@@ -432,6 +432,7 @@ ENTRY(compat_hypercall_table)
+         .quad do_tmem_op
+         .quad do_v4v_op           /* reserved for XenClient - used for v4v*/
+         .quad do_xenpmu_op              /* 40 */
++        .quad do_txt_op
+         .rept __HYPERVISOR_arch_0-((.-compat_hypercall_table)/8)
+         .quad compat_ni_hypercall
+         .endr
+@@ -483,6 +484,7 @@ ENTRY(compat_hypercall_args_table)
+         .byte 1 /* do_tmem_op               */
+         .byte 6 /* reserved for XenClient - used for v4v */
+         .byte 2 /* do_xenpmu_op             */  /* 40 */
++        .byte 2 /* do_txt_op                */
+         .rept __HYPERVISOR_arch_0-(.-compat_hypercall_args_table)
+         .byte 0 /* compat_ni_hypercall      */
+         .endr
+Index: xen-4.6.1/xen/arch/x86/x86_64/entry.S
+===================================================================
+--- xen-4.6.1.orig/xen/arch/x86/x86_64/entry.S
++++ xen-4.6.1/xen/arch/x86/x86_64/entry.S
+@@ -765,6 +765,7 @@ ENTRY(hypercall_table)
+         .quad do_tmem_op
+         .quad do_v4v_op       /* reserved for XenClient - used for v4v*/
+         .quad do_xenpmu_op          /* 40 */
++        .quad do_txt_op
+         .rept __HYPERVISOR_arch_0-((.-hypercall_table)/8)
+         .quad do_ni_hypercall
+         .endr
+@@ -816,6 +817,7 @@ ENTRY(hypercall_args_table)
+         .byte 1 /* do_tmem_op           */
+         .byte 6 /* reserved for XenClient - used for v4v */
+         .byte 2 /* do_xenpmu_op         */  /* 40 */
++        .byte 2 /* do_txt_op            */
+         .rept __HYPERVISOR_arch_0-(.-hypercall_args_table)
+         .byte 0 /* do_ni_hypercall      */
+         .endr
