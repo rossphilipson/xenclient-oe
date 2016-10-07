@@ -1,3 +1,60 @@
+Index: qemu-2.6.2/Makefile.objs
+===================================================================
+--- qemu-2.6.2.orig/Makefile.objs
++++ qemu-2.6.2/Makefile.objs
+@@ -105,6 +105,10 @@ util-obj-y +=  trace/
+ target-obj-y += trace/
+ 
+ ######################################################################
++# loggin-syslog
++common-obj-$(CONFIG_SYSLOG_LOGGING) += logging.o
++
++######################################################################
+ # guest agent
+ 
+ # FIXME: a few definitions from qapi-types.o/qapi-visit.o are needed
+Index: qemu-2.6.2/configure
+===================================================================
+--- qemu-2.6.2.orig/configure
++++ qemu-2.6.2/configure
+@@ -221,6 +221,7 @@ xen=""
+ xen_ctrl_version=""
+ xen_pv_domain_build="no"
+ xen_pci_passthrough=""
++syslog="yes"
+ linux_aio=""
+ cap_ng=""
+ attr=""
+@@ -910,6 +911,10 @@ for opt do
+   ;;
+   --enable-xen-pv-domain-build) xen_pv_domain_build="yes"
+   ;;
++  --enable-syslog) syslog="yes"
++  ;;
++  --disable-syslog) syslog="no"
++  ;;
+   --disable-brlapi) brlapi="no"
+   ;;
+   --enable-brlapi) brlapi="yes"
+@@ -1299,6 +1304,8 @@ Advanced options (experts only):
+                            Available backends: $($python $source_path/scripts/tracetool.py --list-backends)
+   --with-trace-file=NAME   Full PATH,NAME of file to store traces
+                            Default:trace-<pid>
++  --enable-syslog          logging into syslog (default)
++  --disable-syslog
+   --disable-slirp          disable SLIRP userspace network connectivity
+   --enable-tcg-interpreter enable TCG with bytecode interpreter (TCI)
+   --oss-lib                path to OSS library
+@@ -4980,6 +4987,9 @@ fi
+ if test "$static" = "yes" ; then
+   echo "CONFIG_STATIC=y" >> $config_host_mak
+ fi
++if test "$syslog" = "yes"; then
++  echo "CONFIG_SYSLOG_LOGGING=y" >> $config_host_mak
++fi
+ if test "$profiler" = "yes" ; then
+   echo "CONFIG_PROFILER=y" >> $config_host_mak
+ fi
 Index: qemu-2.6.2/logging.c
 ===================================================================
 --- /dev/null
@@ -79,63 +136,6 @@ Index: qemu-2.6.2/logging.h
 +
 +
 +#endif /* !LOGGING_H_ */
-Index: qemu-2.6.2/Makefile.objs
-===================================================================
---- qemu-2.6.2.orig/Makefile.objs
-+++ qemu-2.6.2/Makefile.objs
-@@ -105,6 +105,10 @@ util-obj-y +=  trace/
- target-obj-y += trace/
- 
- ######################################################################
-+# loggin-syslog
-+common-obj-$(CONFIG_SYSLOG_LOGGING) += logging.o
-+
-+######################################################################
- # guest agent
- 
- # FIXME: a few definitions from qapi-types.o/qapi-visit.o are needed
-Index: qemu-2.6.2/configure
-===================================================================
---- qemu-2.6.2.orig/configure
-+++ qemu-2.6.2/configure
-@@ -221,6 +221,7 @@ xen=""
- xen_ctrl_version=""
- xen_pv_domain_build="no"
- xen_pci_passthrough=""
-+syslog="yes"
- linux_aio=""
- cap_ng=""
- attr=""
-@@ -910,6 +911,10 @@ for opt do
-   ;;
-   --enable-xen-pv-domain-build) xen_pv_domain_build="yes"
-   ;;
-+  --enable-syslog) syslog="yes"
-+  ;;
-+  --disable-syslog) syslog="no"
-+  ;;
-   --disable-brlapi) brlapi="no"
-   ;;
-   --enable-brlapi) brlapi="yes"
-@@ -1299,6 +1304,8 @@ Advanced options (experts only):
-                            Available backends: $($python $source_path/scripts/tracetool.py --list-backends)
-   --with-trace-file=NAME   Full PATH,NAME of file to store traces
-                            Default:trace-<pid>
-+  --enable-syslog          logging into syslog (default)
-+  --disable-syslog
-   --disable-slirp          disable SLIRP userspace network connectivity
-   --enable-tcg-interpreter enable TCG with bytecode interpreter (TCI)
-   --oss-lib                path to OSS library
-@@ -4980,6 +4987,9 @@ fi
- if test "$static" = "yes" ; then
-   echo "CONFIG_STATIC=y" >> $config_host_mak
- fi
-+if test "$syslog" = "yes"; then
-+  echo "CONFIG_SYSLOG_LOGGING=y" >> $config_host_mak
-+fi
- if test "$profiler" = "yes" ; then
-   echo "CONFIG_PROFILER=y" >> $config_host_mak
- fi
 Index: qemu-2.6.2/vl.c
 ===================================================================
 --- qemu-2.6.2.orig/vl.c
