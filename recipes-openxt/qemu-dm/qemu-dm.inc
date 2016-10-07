@@ -13,6 +13,7 @@ SRC_URI += "file://compile-time-stubdom-flag.patch \
             file://generic-xenstore-extensions.patch \
             file://readonly-ide.patch \
             file://hvm-param-dm-domain.patch \
+            file://logging-syslog.patch \
             "
 SRC_URI[md5sum] = "bdf1f3d0c177ebeb35a079a4bc3fc74e"
 SRC_URI[sha256sum] = "9a7ec64f147b9e1e570c410e00ebe271869b5d4c85392ba047db7617c297faa3"
