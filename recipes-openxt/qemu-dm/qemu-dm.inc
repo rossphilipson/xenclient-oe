@@ -11,31 +11,6 @@ SRC_URI = "http://wiki.qemu-project.org/download/qemu-${PV}.tar.bz2"
 # QEMU Patch Queue
 SRC_URI += "file://compile-time-stubdom-flag.patch \
             "
-
-#            file://0001-generic-xenstore-extensions.patch \
-#            file://0001-readonly-ide.patch;striplevel=1 \
-#            file://0003-hvm-param-dm-domain.patch;striplevel=1 \
-#            file://0005-logging-syslog.patch;striplevel=1 \
-#            file://0006-dmbus.patch;striplevel=1 \
-#            file://0008-switcher.patch;striplevel=1 \
-#            file://0009-acpi.patch;striplevel=1 \
-#            file://0013-xenmou.patch;striplevel=1 \
-#            file://0015-atapi-pass-through.patch;striplevel=1 \
-#            file://0016-vbe-xt-extensions.patch;striplevel=1 \
-#            file://0017-vga-spinlock.patch;striplevel=1 \
-#            file://0018-vga-shadow-bda.patch;striplevel=1 \
-#            file://0019-surfman-dcl.patch;striplevel=1 \
-#            file://0020-audio-policy.patch;striplevel=1 \
-#            file://0023-msix-cap-disable.patch;striplevel=1 \
-#            file://0024-Xenstore-based-ISO-media-change-detection-for-both-s.patch;striplevel=1 \
-#            file://0026-openxtaudio.patch;striplevel=1 \
-#            file://0027-nic-link-state-propagation.patch;striplevel=1 \
-#            file://0029-stubdom-read-gsi-from-device-config-space.patch;striplevel=1 \
-#            file://0030-xenfv-i440fx-max-ram-below-4g.patch;striplevel=1 \
-#            file://0033-acpi-pm-feature.patch;striplevel=1 \
-#            file://0034-maintain-time-offset.patch;striplevel=1 \
-#            file://0035-add-acpi-wakeup.patch;striplevel=1 \
-
 SRC_URI[md5sum] = "bdf1f3d0c177ebeb35a079a4bc3fc74e"
 SRC_URI[sha256sum] = "9a7ec64f147b9e1e570c410e00ebe271869b5d4c85392ba047db7617c297faa3"
 
