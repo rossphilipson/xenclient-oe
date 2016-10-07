@@ -47,13 +47,8 @@ EXTRA_OECONF += " \
     --disable-curl \
     --disable-kvm \
     --disable-tools \
-    --disable-guest-base \
     --enable-pie \
     --enable-werror \
-    --enable-surfman \
-    --enable-atapi-pt \
-    --enable-atapi-pt-v4v \
-    --enable-readonly-ide \
     --enable-debug \
 "
 
