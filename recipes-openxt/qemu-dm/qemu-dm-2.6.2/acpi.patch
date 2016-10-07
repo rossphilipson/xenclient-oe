@@ -18,7 +18,7 @@ Index: qemu-2.6.2/hw/acpi/core.c
  #include "qapi/opts-visitor.h"
  #include "qapi-visit.h"
  #include "qapi-event.h"
-+#include "xen/xen.h" /* needed for 'xenstore_update_power' */
++#include "hw/xen/xen.h" /* needed for 'xenstore_update_power' */
  
  struct acpi_table_header {
      uint16_t _length;         /* our length, not actual part of the hdr */
@@ -40,7 +40,7 @@ Index: qemu-2.6.2/hw/acpi/core.c
  static const char unsigned dfl_hdr[ACPI_TABLE_HDR_SIZE - ACPI_TABLE_PFX_SIZE] =
      "QEMU\0\0\0\0\1\0"       /* sig (4), len(4), revno (1), csum (1) */
      "QEMUQEQEMUQEMU\1\0\0\0" /* OEM id (6), table (8), revno (4) */
-@@ -554,16 +571,28 @@ static void acpi_pm1_cnt_write(ACPIREGS
+@@ -554,16 +571,29 @@ static void acpi_pm1_cnt_write(ACPIREGS
          /* change suspend type */
          uint16_t sus_typ = (val >> 10) & 7;
          switch(sus_typ) {
@@ -52,7 +52,8 @@ Index: qemu-2.6.2/hw/acpi/core.c
 +            xenstore_update_power(XENSTORE_PM_TYPE_SLEEP);
 +            break;
 +        case SLP_TYP_S4_V0: /* S4: Suspend to disk: Hibernation */
-+            monitor_protocol_event(QEVENT_SUSPEND_DISK, NULL);
++            /* PRIOR: monitor_protocol_event(QEVENT_SUSPEND_DISK, NULL); */
++            qapi_event_send_suspend_disk(&error_abort);
              qemu_system_shutdown_request();
 +            xenstore_update_power(XENSTORE_PM_TYPE_HIBERNATE);
              break;
