@@ -26,13 +26,15 @@ Index: qemu-2.6.2/ui/xen-input.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/ui/xen-input.c
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,542 @@
++#include "qemu/osdep.h"
 +#include <linux/input.h>
 +#include <stdlib.h>
-+#include "ui/console.h"
 +#include "qemu-common.h"
++#include "ui/console.h"
 +#include "xen-input.h"
 +#include "sysemu/sysemu.h"
++#include "standard-headers/linux/input-event-codes.h"
 +
 +#define DEBUG_INPUT
 +
@@ -86,6 +88,8 @@ Index: qemu-2.6.2/ui/xen-input.c
 + */
 +static void kbd_put_keycode(int keycode)
 +{
++#define KEY_RELEASE 0x80
++#define KEY_MASK    0xff
 +     if (keycode & KEY_RELEASE) {
 +        qemu_input_event_send_key_number(NULL, keycode & KEY_MASK, false);
 +        qemu_input_event_send_key_delay(0);
@@ -96,14 +100,14 @@ Index: qemu-2.6.2/ui/xen-input.c
 +     }
 +}
 +
-+void kbd_mouse_event(bool abs, int x, int y, int buttons_state)
++static void kbd_mouse_event(bool abs, int x, int y, int button_state)
 +{
 +    static uint32_t bmap[INPUT_BUTTON__MAX] = {
-+        [INPUT_BUTTON_LEFT]       = SDL_BUTTON(SDL_BUTTON_LEFT),
-+        [INPUT_BUTTON_MIDDLE]     = SDL_BUTTON(SDL_BUTTON_MIDDLE),
-+        [INPUT_BUTTON_RIGHT]      = SDL_BUTTON(SDL_BUTTON_RIGHT),
-+        [INPUT_BUTTON_WHEEL_UP]   = SDL_BUTTON(SDL_BUTTON_WHEELUP),
-+        [INPUT_BUTTON_WHEEL_DOWN] = SDL_BUTTON(SDL_BUTTON_WHEELDOWN),
++        [INPUT_BUTTON_LEFT]       = BTN_LEFT,
++        [INPUT_BUTTON_MIDDLE]     = BTN_MIDDLE,
++        [INPUT_BUTTON_RIGHT]      = BTN_RIGHT,
++        [INPUT_BUTTON_WHEEL_UP]   = BTN_GEAR_UP,
++        [INPUT_BUTTON_WHEEL_DOWN] = BTN_GEAR_DOWN
 +    };
 +    static uint32_t prev_state;
 +
@@ -436,8 +440,8 @@ Index: qemu-2.6.2/ui/xen-input.c
 +                }
 +                mouse_button_state |= mouse_key;
 +            }
-+            kbd_mouse_event_absolute(absolute.x, absolute.y,
-+                                     absolute.z, mouse_button_state);
++            kbd_mouse_event(true, absolute.x, absolute.y,
++                            mouse_button_state);
 +            absolute.count = 0;
 +            absolute.z = 0;
 +        }
