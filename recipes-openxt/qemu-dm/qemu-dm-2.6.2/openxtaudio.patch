@@ -2,7 +2,7 @@ Index: qemu-2.6.2/audio/alsadef.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/audio/alsadef.c
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,151 @@
 +//
 +// Copyright (c) 2015 Assured Information Security, Inc
 +//
@@ -25,6 +25,10 @@ Index: qemu-2.6.2/audio/alsadef.c
 +// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 +//
 +
++#include "qemu/osdep.h"
++#include "qemu-common.h"
++#include "audio.h"
++#include "qemu/timer.h"
 +#include "alsadef.h"
 +
 +///
@@ -154,7 +158,7 @@ Index: qemu-2.6.2/audio/alsadef.h
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/audio/alsadef.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,35 @@
 +//
 +// Copyright (c) 2015 Assured Information Security, Inc
 +//
@@ -181,9 +185,6 @@ Index: qemu-2.6.2/audio/alsadef.h
 +#define ALSADEF_H
 +
 +// QEMU Libraries
-+#include "qemu-common.h"
-+#include "audio.h"
-+#include "qemu/timer.h"
 +
 +// ALSA Libraries
 +#include <alsa/asoundlib.h>
@@ -224,7 +225,7 @@ Index: qemu-2.6.2/audio/openxtaudio.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/audio/openxtaudio.c
-@@ -0,0 +1,734 @@
+@@ -0,0 +1,737 @@
 +//
 +// Copyright (c) 2015 Assured Information Security, Inc
 +//
@@ -247,6 +248,7 @@ Index: qemu-2.6.2/audio/openxtaudio.c
 +// Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 +//
 +
++#include "qemu/osdep.h"
 +#include "qemu-common.h"
 +#include "audio.h"
 +#include "qemu/timer.h"
@@ -361,7 +363,8 @@ Index: qemu-2.6.2/audio/openxtaudio.c
 +///         negative error code on error
 +///         0 on success
 +///
-+static int openxt_playback_init(HWVoiceOut *hw, struct audsettings *as)
++static int openxt_playback_init(HWVoiceOut *hw, struct audsettings *as,
++                                void *drv_opaque)
 +{
 +    int ret;
 +    struct audsettings settings;
@@ -646,7 +649,8 @@ Index: qemu-2.6.2/audio/openxtaudio.c
 +///         negative error code on error
 +///         0 on success
 +///
-+static int openxt_capture_init(HWVoiceIn *hw, struct audsettings *as)
++static int openxt_capture_init(HWVoiceIn *hw, struct audsettings *as,
++                               void *drv_opaque)
 +{
 +    int ret;
 +    struct audsettings settings;
