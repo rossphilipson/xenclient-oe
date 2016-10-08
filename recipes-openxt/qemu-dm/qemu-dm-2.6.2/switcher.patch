@@ -33,7 +33,7 @@ Index: qemu-2.6.2/ui/xen-input.c
 +#include "qemu-common.h"
 +#include "ui/console.h"
 +#include "ui/input.h"
-+#include "xen-input.h"
++#include "ui/xen-input.h"
 +#include "sysemu/sysemu.h"
 +#include "standard-headers/linux/input-event-codes.h"
 +
@@ -570,10 +570,10 @@ Index: qemu-2.6.2/ui/xen-input.c
 +
 +    return rc;
 +}
-Index: qemu-2.6.2/ui/xen-input.h
+Index: qemu-2.6.2/include/ui/xen-input.h
 ===================================================================
 --- /dev/null
-+++ qemu-2.6.2/ui/xen-input.h
++++ qemu-2.6.2/include/ui/xen-input.h
 @@ -0,0 +1,30 @@
 +#ifndef UI_XEN_INPUT_H_
 +# define UI_XEN_INPUT_H_

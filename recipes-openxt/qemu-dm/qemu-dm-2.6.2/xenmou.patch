@@ -24,11 +24,12 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/xen/xenmou.c
-@@ -0,0 +1,806 @@
+@@ -0,0 +1,807 @@
 +/*
 + * ITEmou.c: xen mouse pci card emulator
 + */
 +
++#include "qemu/osdep.h"
 +#include "hw/hw.h"
 +#include "exec/memory.h"
 +#include "ui/console.h"
@@ -775,13 +776,13 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 +    memory_region_init_io(&d->mmio_bar, &xenmou_mmio_handler, d,
 +                          "xenmou-mmio", MMIO_BAR_SIZE);
 +
-+    memory_region_init_ram(&d->event_region, "xenmou-event",
-+                           EVENT_REGION_SIZE);
++    memory_region_init_ram(&d->event_region, OBJECT(dev), "xenmou-event",
++                           EVENT_REGION_SIZE, &error_fatal);
 +    memory_region_add_subregion(&d->mmio_bar, XENMOU_EVENT_OFFSET,
 +                                &d->event_region);
 +
-+    memory_region_init_ram(&d->devprop_region, "xenmou-devprop",
-+                           DEVPROP_REGION_SIZE);
++    memory_region_init_ram(&d->devprop_region, OBJECT(dev), "xenmou-devprop",
++                           DEVPROP_REGION_SIZE, &error_fatal);
 +    memory_region_add_subregion(&d->mmio_bar, XENMOU_DEVPROP_OFFSET,
 +                                &d->devprop_region);
 +    pci_register_bar(&d->pci_dev, 0, PCI_BASE_ADDRESS_MEM_TYPE_32,
@@ -809,7 +810,7 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 +    k->init = xenmou_initfn;
 +    k->vendor_id = PCI_VENDOR_ID_XEN;
 +    k->device_id = PCI_DEVICE_ID_XENMOU;
-+    k->class_id = PCI_CLASS_INPUT_DEVICE;
++    k->class_id = PCI_CLASS_INPUT_OTHER;
 +    k->subsystem_vendor_id = PCI_VENDOR_ID_XEN;
 +    k->subsystem_id = PCI_DEVICE_ID_XENMOU;
 +    k->revision = 1;
