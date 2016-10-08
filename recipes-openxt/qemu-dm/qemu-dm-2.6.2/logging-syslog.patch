@@ -25,7 +25,7 @@ Index: qemu-2.6.2/configure
  linux_aio=""
  cap_ng=""
  attr=""
-@@ -910,6 +911,10 @@ for opt do
+@@ -911,6 +912,10 @@ for opt do
    ;;
    --enable-xen-pv-domain-build) xen_pv_domain_build="yes"
    ;;
@@ -36,7 +36,7 @@ Index: qemu-2.6.2/configure
    --disable-brlapi) brlapi="no"
    ;;
    --enable-brlapi) brlapi="yes"
-@@ -1299,6 +1304,8 @@ Advanced options (experts only):
+@@ -1300,6 +1305,8 @@ Advanced options (experts only):
                             Available backends: $($python $source_path/scripts/tracetool.py --list-backends)
    --with-trace-file=NAME   Full PATH,NAME of file to store traces
                             Default:trace-<pid>
@@ -45,7 +45,7 @@ Index: qemu-2.6.2/configure
    --disable-slirp          disable SLIRP userspace network connectivity
    --enable-tcg-interpreter enable TCG with bytecode interpreter (TCI)
    --oss-lib                path to OSS library
-@@ -4980,6 +4987,9 @@ fi
+@@ -4981,6 +4988,9 @@ fi
  if test "$static" = "yes" ; then
    echo "CONFIG_STATIC=y" >> $config_host_mak
  fi

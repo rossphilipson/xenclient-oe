@@ -10,7 +10,7 @@ Index: qemu-2.6.2/configure
  sdlabi="1.2"
  virtfs=""
  vnc="yes"
-@@ -828,6 +829,10 @@ for opt do
+@@ -829,6 +830,10 @@ for opt do
    ;;
    --enable-sdl) sdl="yes"
    ;;
