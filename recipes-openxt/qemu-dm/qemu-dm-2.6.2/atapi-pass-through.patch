@@ -3754,3 +3754,146 @@ Index: qemu-2.6.2/include/hw/atapi_pt.h
 +void atapi_pt_dout_fetch_pio_done(IDEState *s);
 +
 +#endif /* !ATAPI_PT_H_ */
+Index: qemu-2.6.2/hw/ide/core.c
+===================================================================
+--- qemu-2.6.2.orig/hw/ide/core.c
++++ qemu-2.6.2/hw/ide/core.c
+@@ -1665,7 +1665,11 @@ static bool cmd_packet(IDEState *s, uint
+     }
+     s->nsector = 1;
+     ide_transfer_start(s, s->io_buffer, ATAPI_PACKET_SIZE,
++#ifdef CONFIG_ATAPI_PT
++                       s->atapi_pt ? atapi_pt_cmd : ide_atapi_cmd);
++#else
+                        ide_atapi_cmd);
++#endif
+     return false;
+ }
+ 
+@@ -2201,7 +2205,12 @@ void ide_cmd_write(void *opaque, uint32_
+ static bool ide_is_pio_out(IDEState *s)
+ {
+     if (s->end_transfer_func == ide_sector_write ||
+-        s->end_transfer_func == ide_atapi_cmd) {
++        s->end_transfer_func == ide_atapi_cmd
++#ifdef CONFIG_ATAPI_PT
++        || s->end_transfer_func == atapi_pt_cmd ||
++           s->end_transfer_func == atapi_pt_dout_fetch_pio_done
++#endif
++        ) {
+         return false;
+     } else if (s->end_transfer_func == ide_sector_read ||
+                s->end_transfer_func == ide_transfer_stop ||
+@@ -2406,6 +2415,12 @@ int ide_init_drive(IDEState *s, BlockBac
+     uint64_t nb_sectors;
+ 
+     s->blk = blk;
++#ifdef CONFIG_ATAPI_PT
++    if (kind == IDE_CD_PT) {
++        kind = IDE_CD;
++        s->atapi_pt = true;
++    }
++#endif
+     s->drive_kind = kind;
+ 
+     blk_get_geometry(blk, &nb_sectors);
+@@ -2448,7 +2463,19 @@ int ide_init_drive(IDEState *s, BlockBac
+     } else {
+         switch (kind) {
+         case IDE_CD:
+-            strcpy(s->drive_model_str, "QEMU DVD-ROM");
++#ifdef CONFIG_ATAPI_PT
++            if (s->atapi_pt) {
++                strcpy(s->drive_model_str, "QEMU DVD PT");
++                if (0 != atapi_pt_init(s)) {
++                    error_report("Can't use a direst Pass Through drive");
++                    return -1;
++                }
++            } else {
++#endif
++                strcpy(s->drive_model_str, "QEMU DVD-ROM");
++#ifdef CONFIG_ATAPI_PT
++            }
++#endif
+             break;
+         case IDE_CFATA:
+             strcpy(s->drive_model_str, "QEMU MICRODRIVE");
+@@ -2480,8 +2507,15 @@ static void ide_init1(IDEBus *bus, int u
+     s->drive_serial = drive_serial++;
+     /* we need at least 2k alignment for accessing CDROMs using O_DIRECT */
+     s->io_buffer_total_len = IDE_DMA_BUF_SECTORS*512 + 4;
++
++#ifdef CONFIG_ATAPI_PT
++    /* TODO: why double the buffer size?? */
++    s->io_buffer = qemu_memalign(2048, s->io_buffer_total_len * 2);
++    memset(s->io_buffer, 0, s->io_buffer_total_len * 2);
++#else
+     s->io_buffer = qemu_memalign(2048, s->io_buffer_total_len);
+     memset(s->io_buffer, 0, s->io_buffer_total_len);
++#endif
+ 
+     s->smart_selftest_data = blk_blockalign(s->blk, 512);
+     memset(s->smart_selftest_data, 0, 512);
+@@ -2645,6 +2679,10 @@ static EndTransferFunc* transfer_end_tab
+         ide_atapi_cmd_reply_end,
+         ide_atapi_cmd,
+         ide_dummy_transfer_stop,
++#ifdef CONFIG_ATAPI_PT
++        atapi_pt_cmd,
++        atapi_pt_dout_fetch_pio_done,
++#endif
+ };
+ 
+ static int transfer_end_table_idx(EndTransferFunc *fn)
+Index: qemu-2.6.2/hw/ide/internal.h
+===================================================================
+--- qemu-2.6.2.orig/hw/ide/internal.h
++++ qemu-2.6.2/hw/ide/internal.h
+@@ -317,7 +317,14 @@ typedef struct IDEDMAOps IDEDMAOps;
+ #define SMART_DISABLE         0xd9
+ #define SMART_STATUS          0xda
+ 
+-typedef enum { IDE_HD, IDE_CD, IDE_CFATA } IDEDriveKind;
++typedef enum {
++    IDE_HD,
++    IDE_CD,
++    IDE_CFATA,
++#ifdef CONFIG_ATAPI_PT
++    IDE_CD_PT,
++#endif
++} IDEDriveKind;
+ 
+ typedef void EndTransferFunc(IDEState *);
+ 
+@@ -344,6 +351,10 @@ enum ide_dma_cmd {
+ #define ide_cmd_is_read(s) \
+ 	((s)->dma_cmd == IDE_DMA_READ)
+ 
++#ifdef CONFIG_ATAPI_PT
++#include "hw/ide/atapi_pt.h"
++#endif
++
+ typedef struct IDEBufferedRequest {
+     QLIST_ENTRY(IDEBufferedRequest) list;
+     struct iovec iov;
+@@ -397,6 +408,10 @@ struct IDEState {
+     bool tray_open;
+     bool tray_locked;
+     uint8_t cdrom_changed;
++#ifdef CONFIG_ATAPI_PT
++    bool atapi_pt;
++    ATAPIPassThroughState *atapipts;
++#endif
+     int packet_transfer_size;
+     int elementary_transfer_size;
+     int32_t io_buffer_index;
+@@ -588,6 +603,9 @@ void ide_atapi_cmd_ok(IDEState *s);
+ void ide_atapi_cmd_error(IDEState *s, int sense_key, int asc);
+ void ide_atapi_dma_restart(IDEState *s);
+ void ide_atapi_io_error(IDEState *s, int ret);
++#ifdef CONFIG_ATAPI_PT
++void ide_atapi_cmd_reply(IDEState *s, int size, int max_size);
++#endif
+ 
+ void ide_ioport_write(void *opaque, uint32_t addr, uint32_t val);
+ uint32_t ide_ioport_read(void *opaque, uint32_t addr1);
