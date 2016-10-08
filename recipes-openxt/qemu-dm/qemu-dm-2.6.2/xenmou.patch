@@ -24,7 +24,7 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/xen/xenmou.c
-@@ -0,0 +1,807 @@
+@@ -0,0 +1,811 @@
 +/*
 + * ITEmou.c: xen mouse pci card emulator
 + */
@@ -32,6 +32,7 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 +#include "qemu/osdep.h"
 +#include "hw/hw.h"
 +#include "exec/memory.h"
++#include "qapi/error.h"
 +#include "ui/console.h"
 +#include "hw/xen/xenmou.h"
 +#include <linux/input.h>
@@ -151,9 +152,10 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 +static void xenmou_update_irq(PCIXenMouState *m)
 +{
 +    if (!m->enable_device_interrupts) {
-+        qemu_set_irq(m->pci_dev.irq[0], 0);
-+    } else {
-+        qemu_set_irq(m->pci_dev.irq[0], m->isr ? 1 : 0);
++        pci_set_irq(&m->pci_dev, 0);
++    }
++    else {
++        pci_set_irq(&m->pci_dev, m->isr ? 1 : 0);
 +    }
 +}
 +
@@ -287,10 +289,12 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 +     * This should be fine, as the emulated mouse should be unused
 +     * when using xenmou2, clicks are sent through the latter.
 +     */
++    /* TODO not sure what to do with this. None of the input functions handle
++     * Z-axis any longer. Needs testing.
 +    if (type == EV_REL && code == REL_WHEEL) {
 +        kbd_mouse_event(0, 0, -value, 0);
 +        return;
-+    }
++    }*/
 +
 +    xenmou_inject_record(x, type, code, value);
 +    if (type == EV_SYN) {
@@ -773,7 +777,7 @@ Index: qemu-2.6.2/hw/xen/xenmou.c
 +    pci_config_set_interrupt_pin(pci_conf, 1); /* Interrupt pin 0 */
 +
 +    /* Register mmio bar 0 */
-+    memory_region_init_io(&d->mmio_bar, &xenmou_mmio_handler, d,
++    memory_region_init_io(&d->mmio_bar, OBJECT(dev), &xenmou_mmio_handler, d,
 +                          "xenmou-mmio", MMIO_BAR_SIZE);
 +
 +    memory_region_init_ram(&d->event_region, OBJECT(dev), "xenmou-event",
