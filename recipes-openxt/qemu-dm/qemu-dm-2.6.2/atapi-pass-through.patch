@@ -3897,3 +3897,330 @@ Index: qemu-2.6.2/hw/ide/internal.h
  
  void ide_ioport_write(void *opaque, uint32_t addr, uint32_t val);
  uint32_t ide_ioport_read(void *opaque, uint32_t addr1);
+Index: qemu-2.6.2/hw/ide/pci.c
+===================================================================
+--- qemu-2.6.2.orig/hw/ide/pci.c
++++ qemu-2.6.2/hw/ide/pci.c
+@@ -234,6 +234,16 @@ void bmdma_cmd_writeb(BMDMAState *bm, ui
+     /* Ignore writes to SSBM if it keeps the old value */
+     if ((val & BM_CMD_START) != (bm->cmd & BM_CMD_START)) {
+         if (!(val & BM_CMD_START)) {
++
++            /*
++             * ATAPI PT: This whole function changed quite a bit
++             * and the original patch here seemed unsure of itself so
++             * leaving the patch stubbed our for now.
++             */
++#ifdef CONFIG_ATAPI_PT
++            /* TODO: Why? Are we sure this is safe? */
++            /*dma_cancel(bm);*/
++#endif
+             ide_cancel_dma_sync(idebus_active_if(bm->bus));
+             bm->status &= ~BM_STATUS_DMAING;
+         } else {
+Index: qemu-2.6.2/hw/ide/qdev.c
+===================================================================
+--- qemu-2.6.2.orig/hw/ide/qdev.c
++++ qemu-2.6.2/hw/ide/qdev.c
+@@ -118,7 +118,19 @@ IDEDevice *ide_create_drive(IDEBus *bus,
+ {
+     DeviceState *dev;
+ 
+-    dev = qdev_create(&bus->qbus, drive->media_cd ? "ide-cd" : "ide-hd");
++#ifdef CONFIG_ATAPI_PT
++    /*
++     * TODO this logic seems incorrect. It seems we should test whether it is
++     * media_cd first and only in that case create the ide-cd-pt device.
++     */
++    if (drive->atapi_pt) {
++        dev = qdev_create(&bus->qbus, "ide-cd-pt");
++    } else {
++#endif
++        dev = qdev_create(&bus->qbus, drive->media_cd ? "ide-cd" : "ide-hd");
++#ifdef CONFIG_ATAPI_PT
++    }
++#endif
+     qdev_prop_set_uint32(dev, "unit", unit);
+     qdev_prop_set_drive(dev, "drive", blk_by_legacy_dinfo(drive),
+                         &error_fatal);
+@@ -317,6 +329,35 @@ static const TypeInfo ide_cd_info = {
+     .class_init    = ide_cd_class_init,
+ };
+ 
++#ifdef CONFIG_ATAPI_PT
++static int ide_cd_pt_initfn(IDEDevice *dev)
++{
++    return ide_dev_initfn(dev, IDE_CD_PT);
++}
++
++static Property ide_cd_pt_properties[] = {
++    DEFINE_IDE_DEV_PROPERTIES(),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void ide_cd_pt_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    IDEDeviceClass *k = IDE_DEVICE_CLASS(klass);
++    k->init = ide_cd_pt_initfn;
++    dc->fw_name = "drive";
++    dc->desc = "virtual IDE CD-ROM";
++    dc->props = ide_cd_pt_properties;
++}
++
++static const TypeInfo ide_cd_pt_info = {
++    .name          = "ide-cd-pt",
++    .parent        = TYPE_IDE_DEVICE,
++    .instance_size = sizeof(IDEDrive),
++    .class_init    = ide_cd_pt_class_init,
++};
++#endif /* CONFIG_ATAPI_PT */
++
+ static Property ide_drive_properties[] = {
+     DEFINE_IDE_DEV_PROPERTIES(),
+     DEFINE_PROP_END_OF_LIST(),
+@@ -365,6 +406,9 @@ static void ide_register_types(void)
+     type_register_static(&ide_cd_info);
+     type_register_static(&ide_drive_info);
+     type_register_static(&ide_device_type_info);
++#ifdef CONFIG_ATAPI_PT
++    type_register_static(&ide_cd_pt_info);
++#endif
+ }
+ 
+ type_init(ide_register_types)
+Index: qemu-2.6.2/include/qemu/event_notifier.h
+===================================================================
+--- qemu-2.6.2.orig/include/qemu/event_notifier.h
++++ qemu-2.6.2/include/qemu/event_notifier.h
+@@ -26,6 +26,10 @@ struct EventNotifier {
+     int rfd;
+     int wfd;
+ #endif
++
++#ifdef CONFIG_ATAPI_PT
++    void *opaque;
++#endif
+ };
+ 
+ typedef void EventNotifierHandler(EventNotifier *);
+@@ -41,6 +45,9 @@ int event_notifier_set_handler(EventNoti
+ #ifdef CONFIG_POSIX
+ void event_notifier_init_fd(EventNotifier *, int fd);
+ int event_notifier_get_fd(const EventNotifier *);
++#ifdef CONFIG_ATAPI_PT
++int event_notifier_wait_and_clear(EventNotifier *e, long second);
++#endif
+ #else
+ HANDLE event_notifier_get_handle(EventNotifier *);
+ #endif
+Index: qemu-2.6.2/include/sysemu/blockdev.h
+===================================================================
+--- qemu-2.6.2.orig/include/sysemu/blockdev.h
++++ qemu-2.6.2/include/sysemu/blockdev.h
+@@ -25,6 +25,9 @@ typedef enum {
+     IF_IDE = 0,
+     IF_NONE,
+     IF_SCSI, IF_FLOPPY, IF_PFLASH, IF_MTD, IF_SD, IF_VIRTIO, IF_XEN,
++#ifdef CONFIG_ATAPI_PT
++    IF_ATAPI_PT,
++#endif
+     IF_COUNT
+ } BlockInterfaceType;
+ 
+@@ -40,6 +43,9 @@ struct DriveInfo {
+     QemuOpts *opts;
+     char *serial;
+     QTAILQ_ENTRY(DriveInfo) next;
++#ifdef CONFIG_ATAPI_PT
++    bool atapi_pt;
++#endif
+ };
+ 
+ DriveInfo *blk_legacy_dinfo(BlockBackend *blk);
+Index: qemu-2.6.2/util/event_notifier-posix.c
+===================================================================
+--- qemu-2.6.2.orig/util/event_notifier-posix.c
++++ qemu-2.6.2/util/event_notifier-posix.c
+@@ -130,3 +130,41 @@ int event_notifier_test_and_clear(EventN
+ 
+     return value;
+ }
++
++#ifdef CONFIG_ATAPI_PT
++int event_notifier_wait_and_clear(EventNotifier *e, long second)
++{
++    fd_set rfds;
++    int value;
++    struct timeval tv;
++    struct timeval *tvp;
++
++    if (second != 0) {
++        tv.tv_sec = second;
++        tv.tv_usec = 0;
++        tvp = &tv;
++    } else {
++        tvp = NULL;
++    }
++
++    FD_ZERO(&rfds);
++    FD_SET(e->rfd, &rfds);
++
++    value = select(e->rfd + 1, &rfds, NULL, NULL, tvp);
++
++    switch (value) {
++    case -1:
++        value = -errno;
++        break;
++    case 1:
++        event_notifier_test_and_clear(e);
++        break;
++    case 0:
++    default:
++        value = 0;
++        break;
++    }
++
++    return value;
++}
++#endif
+Index: qemu-2.6.2/include/block/atapi_pt_ioctl.h
+===================================================================
+--- /dev/null
++++ qemu-2.6.2/include/block/atapi_pt_ioctl.h
+@@ -0,0 +1,37 @@
++/*
++ *
++ * Copyright (C) 2015 Assured Information Security, Chris Patterson <pattersonc@ainfosec.com>
++ * Copyright (C) 2014 Citrix Systems Ltd
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ */
++
++#ifndef _ATAPI_PT_IOCTL_H_
++#define _ATAPI_PT_IOCTL_H_
++
++typedef enum {
++    ATAPI_PT_OPEN                        = 0x00,
++    ATAPI_PT_SG_IO                       = 0x01,
++    ATAPI_PT_SG_GET_RESERVED_SIZE        = 0x02,
++    ATAPI_PT_ACQUIRE_LOCK                = 0x03,
++    ATAPI_PT_RELEASE_LOCK                = 0x04,
++    ATAPI_PT_GET_GLOB_MEDIA_STATE        = 0x05,
++    ATAPI_PT_SET_GLOB_MEDIA_STATE        = 0x06,
++} atapi_pt_ioctl_cmd_t;
++
++void atapi_pt_notify_medium_maybe_changed(void *opaque);
++void atapi_pt_notify_medium_ejected(void *opaque);
++
++#endif /* !_ATAPI_PT_IOCTL_H_ */
+Index: qemu-2.6.2/include/block/atapi_pt_v4v.h
+===================================================================
+--- /dev/null
++++ qemu-2.6.2/include/block/atapi_pt_v4v.h
+@@ -0,0 +1,93 @@
++/*
++ *
++ * Copyright (C) 2015 Assured Information Security, Chris Patterson <pattersonc@ainfosec.com>
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
++ */
++
++#ifndef _ATAPI_PT_V4V_H_
++#define _ATAPI_PT_V4V_H_
++
++typedef enum {
++    ATAPI_PT_LOCK_STATE_UNLOCKED         = 0x00,
++    ATAPI_PT_LOCK_STATE_LOCKED_BY_ME     = 0x01,
++    ATAPI_PT_LOCK_STATE_LOCKED_BY_OTHER  = 0x02,
++} atapi_pt_lock_state_t;
++
++typedef enum {
++    ATAPI_PTV4V_OPEN                     = 0x00,
++    ATAPI_PTV4V_SG_IO                    = 0x01,
++    ATAPI_PTV4V_SG_GET_RESERVED_SIZE     = 0x02,
++    ATAPI_PTV4V_ACQUIRE_LOCK             = 0x03,
++    ATAPI_PTV4V_RELEASE_LOCK             = 0x04,
++} atapi_ptv4v_cmd_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_OPEN */
++    uint8_t device_id;
++    char device_path[256];
++} __attribute__((packed)) pt_v4vcmd_open_request_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_OPEN */
++    uint8_t device_id;
++} __attribute__((packed)) pt_v4vcmd_open_response_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_ACQUIRE_LOCK */
++    uint8_t device_id;
++} __attribute__((packed)) pt_v4vcmd_acquire_lock_request_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_ACQUIRE_LOCK */
++    uint8_t device_id;
++    uint8_t lock_state; /* atapi_pt_lock_state_t */
++} __attribute__((packed)) pt_v4vcmd_acquire_lock_response_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_RELEASE_LOCK */
++    uint8_t device_id;
++} __attribute__((packed)) pt_v4vcmd_release_lock_request_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_SG_GET_RESERVED_SIZE */
++    uint8_t device_id;
++} __attribute__((packed)) pt_v4vcmd_sg_get_reserved_size_request_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_SG_GET_RESERVED_SIZE */
++    uint8_t device_id;
++    uint32_t size;
++} __attribute__((packed)) pt_v4vcmd_sg_get_reserved_size_response_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_SG_IO */
++    uint8_t device_id;
++    struct sg_io_v4 sgio;
++    uint8_t request_data[12]; /* ATAPI_PACKET_SIZE */
++    uint32_t dout_data_len;
++    uint8_t dout_data[];
++} __attribute__((packed)) pt_v4vcmd_sg_io_request_t;
++
++typedef struct {
++    uint8_t cmd; /* ATAPI_PTV4V_SG_IO */
++    uint8_t device_id;
++    struct sg_io_v4 sgio;
++    uint8_t sense_data[64]; /* struct request_sense */
++    uint32_t din_data_len;
++    uint8_t din_data[];
++} __attribute__((packed)) pt_v4vcmd_sg_io_response_t;
++
++#endif /* !_ATAPI_PT_V4V_H_ */

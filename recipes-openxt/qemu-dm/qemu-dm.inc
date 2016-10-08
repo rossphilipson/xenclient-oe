@@ -58,6 +58,8 @@ EXTRA_OECONF += " \
     --disable-tools \
     --enable-pie \
     --enable-werror \
+    --enable-atapi-pt \
+    --enable-atapi-pt-v4v \
     --enable-readonly-ide \
     --enable-debug \
 "
