@@ -14,7 +14,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/block/atapi-pt-protocol.c
-@@ -0,0 +1,1489 @@
+@@ -0,0 +1,1491 @@
 +/*
 + * ATAPI guest commands translation.
 + *
@@ -38,6 +38,8 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +
 +#include "qemu/osdep.h"
 +#include "qemu-common.h"
++#include "qapi/error.h"
++#include "qapi/qmp/qstring.h"
 +#include "qemu/module.h"
 +#include "block/block_int.h"
 +
@@ -1643,7 +1645,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/ide/atapi_pt.c
-@@ -0,0 +1,2039 @@
+@@ -0,0 +1,2044 @@
 +/*
 + * ATAPI guest commands translation.
 + *
@@ -1669,11 +1671,12 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +#include <scsi/sg.h>
 +
 +#include "qemu/osdep.h"
-+#include "hw/scsi-defs.h"
++#include "block/scsi.h"
 +#include "hw/ide/internal.h"
-+#include "atapi_pt.h"
++#include "hw/atapi_pt.h"
 +#include "block/block.h"
 +#include "block/block_int.h"
++#include "sysemu/block-backend.h"
 +#include "block/atapi_pt_ioctl.h"
 +#include "block/atapi_pt_v4v.h"
 +
@@ -2619,7 +2622,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +    }
 +
 +    /* if the global state suggests media is in the drive, setup notify */
-+    if (ptcmd_get_global_media_state(s->bs)) {
++    if (ptcmd_get_global_media_state(blk_bs(s->blk))) {
 +        as->notify_new_media = true;
 +    }
 +
@@ -2720,7 +2723,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +        }
 +
 +        if (!r) {
-+            r = ptcmd_do_sg_io(s->bs, &cmd);
++            r = ptcmd_do_sg_io(blk_bs(s->blk), &cmd);
 +        }
 +        if (r) {
 +            as->result = r;
@@ -2795,13 +2798,13 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +    if (ev_class == 4 && ev_code == MEC_NEW_MEDIA) {
 +        /* This is a "new media" message coming from actual drive */
 +        PT_LOG("new media detected\n");
-+        ptcmd_set_global_media_state(s->bs, true);
++        ptcmd_set_global_media_state(blk_bs(s->blk), true);
 +    }
 +
 +    if (ev_class == 4 && ev_code == MEC_MEDIA_REMOVAL) {
 +        /* This is a "media removed" message coming from actual drive */
 +        PT_LOG("media removed\n");
-+        ptcmd_set_global_media_state(s->bs, false);
++        ptcmd_set_global_media_state(blk_bs(s->blk), false);
 +    }
 +
 +    if (ev_class == 4) {
@@ -2849,7 +2852,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +    }
 +
 +    /* if we don't have the lock, we need to hijack this message */
-+    if (!ptcmd_get_global_media_lock(s->bs)) {
++    if (!ptcmd_get_global_media_lock(blk_bs(s->blk))) {
 +        PT_VERBOSE("spoofing MEC_NO_CHANGE\n");
 +        b[2] = 4;
 +        b[4] = MEC_NO_CHANGE;
@@ -2878,14 +2881,14 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +
 +    event_notifier_test_and_clear(&as->e_ret);
 +
-+    glob_media_present = ptcmd_get_global_media_state(s->bs);
++    glob_media_present = ptcmd_get_global_media_state(blk_bs(s->blk));
 +
 +    if (as->result) {
 +        if ((as->sense.sense_key == SENSE_NOT_READY) &&
 +            (as->sense.asc == ASC_MEDIUM_NOT_PRESENT)) {
 +            if (glob_media_present) {
 +                PT_DEBUG("sense no medium - media must be absent?\n");
-+                ptcmd_set_global_media_state(s->bs, false);
++                ptcmd_set_global_media_state(blk_bs(s->blk), false);
 +            }
 +        }
 +        atapi_pt_error(s);
@@ -2900,7 +2903,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +        (as->request[0] == GPCMD_READ_DISC_INFO)) {
 +        if (!glob_media_present) {
 +            PT_DEBUG("read command detected - media must be present?\n");
-+            ptcmd_set_global_media_state(s->bs, true);
++            ptcmd_set_global_media_state(blk_bs(s->blk), true);
 +        }
 +    }
 +
@@ -2909,7 +2912,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +        event_status_notification_complete(s);
 +    }
 +
-+    if (!ptcmd_get_global_media_lock(s->bs)) {
++    if (!ptcmd_get_global_media_lock(blk_bs(s->blk))) {
 +        if (as->request[0] == GPCMD_GET_CONFIGURATION) {
 +            PT_VERBOSE("spoofing GPCMD_GET_CONFIGURATION\n");
 +            /*
@@ -2987,7 +2990,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +    as->allow_notifications = false;
 +
 +    /* register with backend */
-+    if (ptcmd_open(s->bs, s) != 0) {
++    if (ptcmd_open(blk_bs(s->blk), s) != 0) {
 +        PT_LOG("ptcmd_open failed: %s\n", strerror(errno));
 +        g_free(as);
 +        return -1;
@@ -3010,7 +3013,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +
 +    /* setup worker thread */
 +    as->thread_continue = true;
-+    qemu_thread_create(&(as->thread), atapi_pt_worker_thread,
++    qemu_thread_create(&(as->thread), "atapi_pt_th", atapi_pt_worker_thread,
 +                       s, QEMU_THREAD_JOINABLE);
 +
 +    /*
@@ -3019,7 +3022,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +     * for USB drives where it is 120kb (less than the normal 128kb for some
 +     * reason)
 +     */
-+    if (ptcmd_do_sg_get_reserved_size(s->bs, &(as->max_xfer_len)) != 0) {
++    if (ptcmd_do_sg_get_reserved_size(blk_bs(s->blk), &(as->max_xfer_len)) != 0) {
 +        PT_LOG("SG_GET_RESERVED_SIZE failed: %s\n", strerror(errno));
 +        as->thread_continue = false;
 +        event_notifier_cleanup(&as->e_cmd);
@@ -3031,7 +3034,11 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +                        ~(CD_FRAMESIZE - 1);
 +
 +    as->e_ret.opaque = s;
-+    event_notifier_set_handler(&as->e_ret, atapi_pt_event_read);
++    /*
++     * The two ends of the event handling are all internal to this module
++     * so passing false for is_external.
++     */
++    event_notifier_set_handler(&as->e_ret, false, atapi_pt_event_read);
 +
 +    PT_LOG("initialization complete\n");
 +    return 0;
@@ -3444,7 +3451,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +    }
 +
 +    /* emulate commands when we don't have exclusive media lock */
-+    if (!ptcmd_get_global_media_lock(s->bs)) {
++    if (!ptcmd_get_global_media_lock(blk_bs(s->blk))) {
 +        if (atapi_pt_cmd_requires_ready(cmd_code)) {
 +            /* error with medium not present for commands requiring lock */
 +            PT_VERBOSE("refusing command early: 0x%02x (%s) dma=%d timeout=%u\n",
@@ -3488,11 +3495,11 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +    }
 +
 +    /* check that we have write permissions before continuing write cmds */
-+    if (bdrv_is_read_only(s->bs) && atapi_pt_cmd_requires_write(cmd_code)) {
++    if (bdrv_is_read_only(blk_bs(s->blk)) && atapi_pt_cmd_requires_write(cmd_code)) {
 +        atapi_pt_set_error(s, SENSE_ILLEGAL_REQUEST,
 +                           ASC_ILLEGAL_OPCODE, 0, 0x70);
 +        PT_LOG("error: unable to perform cmd=%s: readonly device=%d\n",
-+               atapi_cmd_to_str(cmd_code), bdrv_is_read_only(s->bs));
++               atapi_cmd_to_str(cmd_code), bdrv_is_read_only(blk_bs(s->blk)));
 +        return;
 +    }
 +
@@ -3957,7 +3964,7 @@ Index: qemu-2.6.2/hw/ide/internal.h
  	((s)->dma_cmd == IDE_DMA_READ)
  
 +#ifdef CONFIG_ATAPI_PT
-+#include "hw/ide/atapi_pt.h"
++#include "hw/atapi_pt.h"
 +#endif
 +
  typedef struct IDEBufferedRequest {
