@@ -14,7 +14,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/block/atapi-pt-protocol.c
-@@ -0,0 +1,1403 @@
+@@ -0,0 +1,1404 @@
 +/*
 + * ATAPI guest commands translation.
 + *
@@ -36,6 +36,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 + * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 + */
 +
++#include "qemu/osdep.h"
 +#include "qemu-common.h"
 +#include "qemu/module.h"
 +#include "block/block_int.h"
@@ -59,8 +60,8 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +#include <libv4v.h>
 +#endif
 +
-+#include <block/atapi_pt_ioctl.h>
-+#include <block/atapi_pt_v4v.h>
++#include "block/atapi_pt_ioctl.h"
++#include "block/atapi_pt_v4v.h"
 +
 +typedef struct AtapiPtDeviceInfo {
 +    /* /dev/bsg/a:b:c:d */
@@ -1557,7 +1558,7 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/ide/atapi_pt.c
-@@ -0,0 +1,2038 @@
+@@ -0,0 +1,2039 @@
 +/*
 + * ATAPI guest commands translation.
 + *
@@ -1582,13 +1583,14 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +#include <sys/mman.h>
 +#include <scsi/sg.h>
 +
++#include "qemu/osdep.h"
 +#include "hw/scsi-defs.h"
 +#include "hw/ide/internal.h"
 +#include "atapi_pt.h"
 +#include "block/block.h"
 +#include "block/block_int.h"
-+#include <block/atapi_pt_ioctl.h>
-+#include <block/atapi_pt_v4v.h>
++#include "block/atapi_pt_ioctl.h"
++#include "block/atapi_pt_v4v.h"
 +
 +extern int pt_log_level;
 +
