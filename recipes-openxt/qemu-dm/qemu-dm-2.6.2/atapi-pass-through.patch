@@ -170,7 +170,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +    /* if autolock is enabled and media is ejected - release lock */
 +    if (info->autolock && !info->media_state) {
 +        info->assigned = 0;
-+        bdrv_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
++        bdrv_direct_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
 +    }
 +}
 +
@@ -210,7 +210,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +    /* release the lock if we are losing assignment */
 +    if (lock == -1) {
 +        info->assigned = 0;
-+        bdrv_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
++        bdrv_direct_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
 +    }
 +}
 +
@@ -272,7 +272,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +
 +    if (eject) {
 +        info->assigned = 0;
-+        bdrv_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
++        bdrv_direct_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
 +    }
 +
 +    /* ack receipt of request */
@@ -300,7 +300,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +    info->assigned = assign;
 +
 +    if (assign) {
-+        bdrv_ioctl(info->bs, ATAPI_PT_ACQUIRE_LOCK, NULL);
++        bdrv_direct_ioctl(info->bs, ATAPI_PT_ACQUIRE_LOCK, NULL);
 +
 +        /* print a warning if we fail to get lock after assignment */
 +        if (info->lock_state != ATAPI_PT_LOCK_STATE_LOCKED_BY_ME) {
@@ -311,7 +311,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +                   info->lock_state, info->assigned);
 +        }
 +    } else {
-+        bdrv_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
++        bdrv_direct_ioctl(info->bs, ATAPI_PT_RELEASE_LOCK, NULL);
 +    }
 +
 +    /* ack receipt of request */
@@ -800,7 +800,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +    .instance_size       = sizeof(BDRVPosixPassThroughState),
 +    .bdrv_probe_device   = pt_local_probe_device,
 +    .bdrv_file_open      = pt_local_open,
-+    .bdrv_ioctl          = pt_local_ioctl,
++    .bdrv_direct_ioctl   = pt_local_ioctl,
 +    .bdrv_close          = pt_local_close,
 +};
 +
@@ -1395,13 +1395,13 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +}
 +
 +static BlockDriver bdrv_host_pt_v4v = {
-+    .format_name = "atapi-pt",
-+    .protocol_name = "atapi-pt-v4v",
-+    .instance_size = sizeof(BDRVStubdomPassThroughState),
++    .format_name       = "atapi-pt",
++    .protocol_name     = "atapi-pt-v4v",
++    .instance_size     = sizeof(BDRVStubdomPassThroughState),
 +    .bdrv_probe_device = pt_v4v_probe_device,
-+    .bdrv_file_open = pt_v4v_open,
-+    .bdrv_ioctl = pt_v4v_ioctl,
-+    .bdrv_close = pt_v4v_close,
++    .bdrv_file_open    = pt_v4v_open,
++    .bdrv_direct_ioctl = pt_v4v_ioctl,
++    .bdrv_close        = pt_v4v_close,
 +};
 +
 +#endif //CONFIG_ATAPI_PT_V4V
@@ -2347,14 +2347,14 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +
 +static int ptcmd_open(BlockDriverState *bs, IDEState *s)
 +{
-+    return bdrv_ioctl(bs, ATAPI_PT_OPEN, s);
++    return bdrv_direct_ioctl(bs, ATAPI_PT_OPEN, s);
 +}
 +
 +static bool ptcmd_get_global_media_lock(BlockDriverState *bs)
 +{
 +    uint32_t lock_state = 0;
 +
-+    bdrv_ioctl(bs, ATAPI_PT_ACQUIRE_LOCK, &lock_state);
++    bdrv_direct_ioctl(bs, ATAPI_PT_ACQUIRE_LOCK, &lock_state);
 +
 +    if (lock_state == ATAPI_PT_LOCK_STATE_LOCKED_BY_ME) {
 +        return true;
@@ -2366,26 +2366,26 @@ Index: qemu-2.6.2/hw/ide/atapi_pt.c
 +static void ptcmd_set_global_media_state(BlockDriverState *bs, bool present)
 +{
 +    uint32_t media_present = present ? 1 : 0;
-+    bdrv_ioctl(bs, ATAPI_PT_SET_GLOB_MEDIA_STATE, &media_present);
++    bdrv_direct_ioctl(bs, ATAPI_PT_SET_GLOB_MEDIA_STATE, &media_present);
 +}
 +
 +static bool ptcmd_get_global_media_state(BlockDriverState *bs)
 +{
 +    uint32_t media_present = 0;
 +
-+    bdrv_ioctl(bs, ATAPI_PT_GET_GLOB_MEDIA_STATE, &media_present);
++    bdrv_direct_ioctl(bs, ATAPI_PT_GET_GLOB_MEDIA_STATE, &media_present);
 +
 +    return media_present ? true : false;
 +}
 +
 +static int ptcmd_do_sg_io(BlockDriverState *bs, void *buf)
 +{
-+    return bdrv_ioctl(bs, ATAPI_PT_SG_IO, buf);
++    return bdrv_direct_ioctl(bs, ATAPI_PT_SG_IO, buf);
 +}
 +
 +static int ptcmd_do_sg_get_reserved_size(BlockDriverState *bs, void *buf)
 +{
-+    return bdrv_ioctl(bs, ATAPI_PT_SG_GET_RESERVED_SIZE, buf);
++    return bdrv_direct_ioctl(bs, ATAPI_PT_SG_GET_RESERVED_SIZE, buf);
 +}
 +
 +static inline char const *atapi_cmd_to_str(uint8_t const cmd)
@@ -4226,3 +4226,58 @@ Index: qemu-2.6.2/include/block/atapi_pt_v4v.h
 +} __attribute__((packed)) pt_v4vcmd_sg_io_response_t;
 +
 +#endif /* !_ATAPI_PT_V4V_H_ */
+Index: qemu-2.6.2/block.c
+===================================================================
+--- qemu-2.6.2.orig/block.c
++++ qemu-2.6.2/block.c
+@@ -3981,3 +3981,21 @@ void bdrv_refresh_filename(BlockDriverSt
+         QDECREF(json);
+     }
+ }
++
++/* OpenXT: direct IOCTL delivery for ATAPI PT.
++ *
++ * This adds back the synchronous bdrv_ioctl that existed in 1.4. It is not
++ * clear the current implementation of the ATAPI PT code will currently work
++ * using the AIO method.
++ *
++ * TODO look into refactoring ATAPI PT to use bdrv_aio_ioctl.
++ * See OXT-772
++ */
++int bdrv_direct_ioctl(BlockDriverState *bs, unsigned long int req, void *buf)
++{
++    BlockDriver *drv = bs->drv;
++
++    if (drv && drv->bdrv_direct_ioctl)
++        return drv->bdrv_direct_ioctl(bs, req, buf);
++    return -ENOTSUP;
++}
+Index: qemu-2.6.2/include/block/block.h
+===================================================================
+--- qemu-2.6.2.orig/include/block/block.h
++++ qemu-2.6.2/include/block/block.h
+@@ -362,6 +362,9 @@ BlockAIOCB *bdrv_aio_ioctl(BlockDriverSt
+         unsigned long int req, void *buf,
+         BlockCompletionFunc *cb, void *opaque);
+ 
++/* OpenXT: direct IOCTL delivery */
++int bdrv_direct_ioctl(BlockDriverState *bs, unsigned long int req, void *buf);
++
+ /* Invalidate any cached metadata used by image formats */
+ void bdrv_invalidate_cache(BlockDriverState *bs, Error **errp);
+ void bdrv_invalidate_cache_all(Error **errp);
+Index: qemu-2.6.2/include/block/block_int.h
+===================================================================
+--- qemu-2.6.2.orig/include/block/block_int.h
++++ qemu-2.6.2/include/block/block_int.h
+@@ -246,6 +246,10 @@ struct BlockDriver {
+         unsigned long int req, void *buf,
+         BlockCompletionFunc *cb, void *opaque);
+ 
++    /* OpenXT: direct IOCTL delivery */
++    int (*bdrv_direct_ioctl)(BlockDriverState *bs, unsigned long int req,
++        void *buf);
++
+     /* List of options for creating images, terminated by name == NULL */
+     QemuOptsList *create_opts;
+ 
