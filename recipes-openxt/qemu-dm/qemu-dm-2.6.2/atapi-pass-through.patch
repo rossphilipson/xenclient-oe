@@ -14,7 +14,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/block/atapi-pt-protocol.c
-@@ -0,0 +1,1404 @@
+@@ -0,0 +1,1489 @@
 +/*
 + * ATAPI guest commands translation.
 + *
@@ -135,6 +135,19 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +
 +    AtapiPtDeviceInfo dev_info;
 +} BDRVPosixPassThroughState;
++
++static QemuOptsList runtime_opts = {
++    .name = "atapi-pt",
++    .head = QTAILQ_HEAD_INITIALIZER(runtime_opts.head),
++    .desc = {
++        {
++            .name = "filename",
++            .type = QEMU_OPT_STRING,
++            .help = "ATAPI PT file name",
++        },
++        { /* end of list */ }
++    },
++};
 +
 +/**
 + * Notify xenstore about local locking status.
@@ -611,26 +624,59 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +}
 +
 +/**
-+ * If protocol matches, opens local device and lock file.
-+ * @param[in] bs
++ * Parse the PT local file name.
 + * @param[in] filename: format "atapi-pt-local:/dev/bsg/a:b:c:d"
-+ * @param[in] flags: device open flags
-+ * @returns 0 if opened successfully, -1 otherwise
++ * @param[in] options: QDict options dictionary to fill in.
++ * @param[in] errp: Error object to use on failure.
 + */
-+static int pt_local_open(BlockDriverState * bs, const char *filename, int flags)
++static void pt_local_parse_filename(const char *filename, QDict *options,
++                                    Error **errp)
 +{
-+    BDRVPosixPassThroughState *pts = bs->opaque;
-+
 +    if (strncmp(filename, "atapi-pt-local:", strlen("atapi-pt-local:")) != 0) {
-+        PT_DEBUG("not a pt device %s\n", filename);
-+        return -1;
++        error_setg(errp, "File name string must start with 'atapi-pt-local:'");
++        return;
 +    }
 +
 +    filename += strlen("atapi-pt-local:");
++    qdict_put_obj(options, "filename", QOBJECT(qstring_from_str(filename)));
++}
++
++/**
++ * If protocol matches, opens local device and lock file.
++ * @param[in] bs
++ * @param[in] options: QDict options dictionary to fill in.
++ * @param[in] flags: device open flags
++ * @param[in] errp: Error object to use on failure.
++ * @returns 0 if opened successfully, -errno otherwise
++ */
++static int pt_local_open(BlockDriverState *bs, QDict *options, int flags,
++                         Error **errp)
++{
++    BDRVPosixPassThroughState *pts = bs->opaque;
++    QemuOpts *opts;
++    Error *local_err = NULL;
++    const char *filename;
++    int ret = 0;
++
++    opts = qemu_opts_create(&runtime_opts, NULL, 0, &error_abort);
++    qemu_opts_absorb_qdict(opts, options, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        ret = -EINVAL;
++        goto out;
++    }
++
++    filename = qemu_opt_get(opts, "filename");
++    if (!filename) {
++        error_setg(errp, "ATAPI_PT local block driver requires a 'filename' option");
++        ret = -EINVAL;
++        goto out;
++    }
 +
 +    if (pt_local_open_device(bs, filename, flags, O_NONBLOCK | O_RDWR) != 0) {
-+        PT_LOG("failed to open device %s\n", filename);
-+        return -1;
++        error_setg(errp, "ATAPI_PT failed to open device %s\n", filename);
++        ret = -ENOENT;
++        goto out;
 +    }
 +
 +    PT_LOG("init for device=%s\n", filename);
@@ -648,7 +694,9 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +
 +    PT_LOG("opened: %s - readonly=%d\n", filename, bdrv_is_read_only(bs));
 +
-+    return 0;
++out:
++    qemu_opts_del(opts);
++    return ret;
 +}
 +
 +/**
@@ -799,6 +847,7 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +    .protocol_name       = "atapi-pt-local",
 +    .instance_size       = sizeof(BDRVPosixPassThroughState),
 +    .bdrv_probe_device   = pt_local_probe_device,
++    .bdrv_parse_filename = pt_local_parse_filename,
 +    .bdrv_file_open      = pt_local_open,
 +    .bdrv_direct_ioctl   = pt_local_ioctl,
 +    .bdrv_close          = pt_local_close,
@@ -958,29 +1007,64 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +}
 +
 +/**
-+ * If protocol matches, opens v4v passthrough device to atapi-dm-helper.
-+ * @param[in] bs
++ * Parse the PT V4V file name.
 + * @param[in] filename: format "atapi-pt-v4v:/dev/bsg/a:b:c:d"
-+ * @param[in] flags: device open flags
-+ * @returns 0 if opened successfully, -1 otherwise
++ * @param[in] options: QDict options dictionary to fill in.
++ * @param[in] errp: Error object to use on failure.
 + */
-+static int pt_v4v_open(BlockDriverState *bs, const char *filename, int flags)
++static void pt_v4v_parse_filename(const char *filename, QDict *options,
++                                  Error **errp)
 +{
-+    BDRVStubdomPassThroughState *pts = bs->opaque;
-+
-+    /* check protocol */
 +    if (strncmp(filename, "atapi-pt-v4v:", strlen("atapi-pt-v4v:")) != 0) {
-+        PT_DEBUG("not a pt device %s\n", filename);
-+        return -1;
++        error_setg(errp, "File name string must start with 'atapi-pt-v4v:'");
++        return;
 +    }
 +
 +    filename += strlen("atapi-pt-v4v:");
++    qdict_put_obj(options, "filename", QOBJECT(qstring_from_str(filename)));
++}
++
++/**
++ * If protocol matches, opens v4v passthrough device to atapi-dm-helper.
++ * @param[in] bs
++ * @param[in] options: QDict options dictionary to fill in.
++ * @param[in] flags: device open flags
++ * @param[in] errp: Error object to use on failure.
++ * @returns 0 if opened successfully, -errno otherwise
++ */
++static int pt_v4v_open(BlockDriverState *bs, QDict *options, int flags,
++                       Error **errp)
++{
++    BDRVStubdomPassThroughState *pts = bs->opaque;
++    QemuOpts *opts;
++    Error *local_err = NULL;
++    const char *filename;
++    int ret = 0;
++
++    opts = qemu_opts_create(&runtime_opts, NULL, 0, &error_abort);
++    qemu_opts_absorb_qdict(opts, options, &local_err);
++    if (local_err) {
++        error_propagate(errp, local_err);
++        ret = -EINVAL;
++        goto out;
++    }
++
++    filename = qemu_opt_get(opts, "filename");
++    if (!filename) {
++        error_setg(errp, "ATAPI_PT local block driver requires a 'filename' option");
++        ret = -EINVAL;
++        goto out;
++    }
 +
 +    PT_LOG("opening: %s - readonly=%d\n", filename, bdrv_is_read_only(bs));
 +
 +    atapi_pt_device_info_init(&pts->dev_info, filename, bs);
 +
-+    return pt_v4v_open_common(pts, filename);
++    ret =  pt_v4v_open_common(pts, filename);
++
++out:
++    qemu_opts_del(opts);
++    return ret;
 +}
 +
 +/**
@@ -1395,13 +1479,14 @@ Index: qemu-2.6.2/block/atapi-pt-protocol.c
 +}
 +
 +static BlockDriver bdrv_host_pt_v4v = {
-+    .format_name       = "atapi-pt",
-+    .protocol_name     = "atapi-pt-v4v",
-+    .instance_size     = sizeof(BDRVStubdomPassThroughState),
-+    .bdrv_probe_device = pt_v4v_probe_device,
-+    .bdrv_file_open    = pt_v4v_open,
-+    .bdrv_direct_ioctl = pt_v4v_ioctl,
-+    .bdrv_close        = pt_v4v_close,
++    .format_name         = "atapi-pt",
++    .protocol_name       = "atapi-pt-v4v",
++    .instance_size       = sizeof(BDRVStubdomPassThroughState),
++    .bdrv_probe_device   = pt_v4v_probe_device,
++    .bdrv_parse_filename = pt_v4v_parse_filename,
++    .bdrv_file_open      = pt_v4v_open,
++    .bdrv_direct_ioctl   = pt_v4v_ioctl,
++    .bdrv_close          = pt_v4v_close,
 +};
 +
 +#endif //CONFIG_ATAPI_PT_V4V
