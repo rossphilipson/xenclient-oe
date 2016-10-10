@@ -1,0 +1,155 @@
+Index: qemu-2.6.2/hw/display/vga.c
+===================================================================
+--- qemu-2.6.2.orig/hw/display/vga.c
++++ qemu-2.6.2/hw/display/vga.c
+@@ -34,6 +34,10 @@
+ #include "hw/xen/xen.h"
+ #include "trace.h"
+ 
++#ifdef CONFIG_XEN
++#include "hw/xen/xen.h"
++#endif
++
+ //#define DEBUG_VGA
+ //#define DEBUG_VGA_MEM
+ //#define DEBUG_VGA_REG
+@@ -567,6 +571,28 @@ void vga_ioport_write(void *opaque, uint
+     }
+ }
+ 
++static inline bool vbe_ext_index_emu(unsigned int index)
++{
++    return (index >= VBE_DISPI_EXT_INDEX_START &&
++            index < (VBE_DISPI_EXT_INDEX_START + VBE_DISPI_EXT_INDEX_NB));
++}
++
++static inline uint16_t vbe_ext_emu_read(VGACommonState *s, unsigned int index)
++{
++    assert(s != NULL);
++    assert(vbe_ext_index_emu(index));
++
++    return s->vbe_ext_regs[index - VBE_DISPI_EXT_INDEX_START];
++}
++
++static inline void vbe_ext_emu_write(VGACommonState *s,
++                                     unsigned int index, uint16_t val)
++{
++    assert(s != NULL);
++    assert(vbe_ext_index_emu(index));
++    s->vbe_ext_regs[index - VBE_DISPI_EXT_INDEX_START] = val;
++}
++
+ /*
+  * Sanity check vbe register writes.
+  *
+@@ -618,7 +644,10 @@ static void vbe_fixup_regs(VGACommonStat
+     }
+ 
+     /* check height */
+-    linelength = r[VBE_DISPI_INDEX_VIRT_WIDTH] * bits / 8;
++    if (vbe_ext_emu_read(s, VBE_DISPI_EXT_INDEX_STRIDE))
++        linelength = vbe_ext_emu_read(s, VBE_DISPI_EXT_INDEX_STRIDE);
++    else
++        linelength = r[VBE_DISPI_INDEX_VIRT_WIDTH] * bits / 8;
+     maxy = s->vbe_size / linelength;
+     if (r[VBE_DISPI_INDEX_YRES] == 0) {
+         r[VBE_DISPI_INDEX_YRES] = 1;
+@@ -734,6 +763,30 @@ uint32_t vbe_ioport_read_data(void *opaq
+         val = s->vbe_size / (64 * 1024);
+     } else {
+         val = 0;
++        if (!(s->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_GETCAPS)) {
++            uint32_t u1, u2;
++            switch (s->vbe_index) {
++                case VBE_DISPI_EXT_INDEX_EDID_XRES:
++                    dpy_get_display_limits(s->ds, &val, &u1, &u2);
++                    break;
++                case VBE_DISPI_EXT_INDEX_EDID_YRES:
++                    dpy_get_display_limits(s->ds, &u1, &val, &u2);
++                    break;
++                case VBE_DISPI_EXT_INDEX_STRIDE_ALIGN:
++                    dpy_get_display_limits(s->ds, &u1, &u2, &val);
++                    break;
++#ifdef CONFIG_XEN
++                case VBE_DISPI_EXT_INDEX_32BPP_ONLY:
++                    val = xenstore_is_32bpp_only();
++                    break;
++                case VBE_DISPI_EXT_INDEX_LEGACY_RES_ONLY:
++                    val = xenstore_is_legacy_res_only();
++                    break;
++#endif /* CONFIG_XEN */
++                default:
++                    break;
++            }
++        }
+     }
+ #ifdef DEBUG_BOCHS_VBE
+     printf("VBE: read index=0x%x val=0x%x\n", s->vbe_index, val);
+@@ -807,6 +860,15 @@ void vbe_ioport_write_data(void *opaque,
+         default:
+             break;
+         }
++    } else if (vbe_ext_index_emu(s->vbe_index)) {
++        vbe_ext_emu_write(s, s->vbe_index, val);
++        switch (s->vbe_index) {
++            case VBE_DISPI_EXT_INDEX_STRIDE:
++                s->vbe_line_offset = val;
++                break;
++            default:
++                break;
++        }
+     }
+ }
+ 
+Index: qemu-2.6.2/include/hw/xen/xen.h
+===================================================================
+--- qemu-2.6.2.orig/include/hw/xen/xen.h
++++ qemu-2.6.2/include/hw/xen/xen.h
+@@ -55,5 +55,7 @@ enum xenstore_pm_type {
+ };
+ 
+ int xenstore_update_power(enum xenstore_pm_type const type);
++bool xenstore_is_32bpp_only(void);
++bool xenstore_is_legacy_res_only(void);
+ 
+ #endif /* QEMU_HW_XEN_H */
+Index: qemu-2.6.2/hw/xen/xen_backend.c
+===================================================================
+--- qemu-2.6.2.orig/hw/xen/xen_backend.c
++++ qemu-2.6.2/hw/xen/xen_backend.c
+@@ -935,3 +935,35 @@ int xenstore_update_power(enum xenstore_
+ 
+     return xenstore_write_int(dompath, "power-state", type);
+ }
++
++/****************************************************
++ * OpenXT: VBE exstentions. */
++bool xenstore_is_32bpp_only(void)
++{
++    char *domain_path;
++    int val;
++
++    domain_path = xs_get_domain_path(xenstore, xen_domid);
++    if (!domain_path) {
++        return false;
++    }
++    if (xenstore_read_int(domain_path, "platform/restrictdisplaydepth", &val)) {
++        return false;
++    }
++    return (val == 32);
++}
++
++bool xenstore_is_legacy_res_only(void)
++{
++    char *domain_path;
++    int val;
++
++    domain_path = xs_get_domain_path(xenstore, xen_domid);
++    if (!domain_path) {
++        return false;
++    }
++    if (xenstore_read_int(domain_path, "platform/restrictdisplayres", &val)) {
++        return false;
++    }
++    return !!val;
++}
