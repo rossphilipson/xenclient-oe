@@ -27,6 +27,7 @@ SRC_URI += "file://compile-time-stubdom-flag.patch \
             file://msix-cap-disable.patch \
             file://xenstore-based-ISO-media-change-detection-for-both-s.patch \
             file://openxtaudio.patch \
+            file://nic-link-state-propagation.patch \
             "
 SRC_URI[md5sum] = "bdf1f3d0c177ebeb35a079a4bc3fc74e"
 SRC_URI[sha256sum] = "9a7ec64f147b9e1e570c410e00ebe271869b5d4c85392ba047db7617c297faa3"
