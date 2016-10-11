@@ -85,7 +85,7 @@ Index: qemu-2.6.2/include/ui/console.h
  
 +#ifdef CONFIG_SURFMAN
 +/* surfman.c */
-+void surfman_display_init(DisplayState *ds);
++void surfman_display_init(void);
 +#endif
 +
  /* curses.c */
@@ -129,7 +129,7 @@ Index: qemu-2.6.2/ui/surfman.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/ui/surfman.c
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,362 @@
 +/*
 + * QEMU graphical console
 + *
@@ -155,7 +155,12 @@ Index: qemu-2.6.2/ui/surfman.c
 + * THE SOFTWARE.
 + */
 +
-+#include "surfman.h"
++#include "qemu/osdep.h"
++#include "hw/xen/xen.h"
++#include "ui/console.h"
++#include "xen-dmbus.h"
++#include "exec/memory.h"
++#include "ui/surfman.h"
 +
 +/**
 + * HACK:
@@ -175,24 +180,24 @@ Index: qemu-2.6.2/ui/surfman.c
 + * Maintain the Surfman display state.
 + * Called every DisplayChangeListener::gui_timer_interval.
 + *
-+ * @param ds The state of the Surfman display to be applied. (Not currently used.)
++ * @param dcl The DCL object of the Surfman display to be applied. (Not currently used.)
 + */
-+static void surfman_dpy_refresh(struct DisplayState *ds)
++static void surfman_dpy_refresh(DisplayChangeListener *dcl)
 +{
-+    (void) ds;
++    (void) dcl;
 +
 +    //Maintain the state of the framebuffer per our emulated hardware.
-+    vga_hw_update();
++    graphic_hw_update(NULL);
 +}
 +
 +/**
 + * Update the Surfman-managed display.
-+ * This should be called whenever a portion of the framebuffer (Surface) of DisplayState /s/ has changed.
++ * This should be called whenever a portion of the framebuffer (Surface) of DisplaySurface /s/ has changed.
 + *
-+ * @param ds The state of the Surfman-managed display.
++ * @param dcl The DCL object of the Surfman-managed display.
 + * @param x, y, w, h The rectangular bounds of the section of the display that requires an update.
 + */
-+static void surfman_dpy_gfx_update(struct DisplayState *ds, int x, int y, int w, int h)
++static void surfman_dpy_gfx_update(DisplayChangeListener *dcl, int x, int y, int w, int h)
 +{
 +    //In many cases, the framebuffer is directly shared with Surfman (and the integrated graphics
 +    //hardware), so the update is handled "in hardware", and we don't need to copy anything.
@@ -202,14 +207,14 @@ Index: qemu-2.6.2/ui/surfman.c
 +    //to copy QEMU's buffer into the guest's VRAM framebuffer-- in other words, to the location
 +    //where Surfman is looking. (This is similar to what the hardware does in modern text mode
 +    //impelementations-- the equivalent of rendering the glyph data into a scanout buffer.)
-+    if (!is_buffer_shared(ds->surface)) {
++    if (!is_buffer_shared(ss->surface)) {
 +
 +        //Get the "stride" for each line of the target image.
-+        unsigned int linesize = ds_get_linesize(ds);     // Somehow, the pixman_image_t is 64b aligned ... always?
++        unsigned int linesize = surface_stride(ss->surface);     // Somehow, the pixman_image_t is 64b aligned ... always?
 +
 +        //And get the byte depth, which tells us how many bytes we'll need to copy
 +        //per pixel in the rectangle's width.
-+        unsigned int Bpp = ds_get_bytes_per_pixel(ds);
++        unsigned int Bpp = surface_bytes_per_pixel(ss->surface);
 +
 +        //Compute the location of the VRAM segment we want to update. This factors in:
 +        // -The location of the LFB (linear framebuffer) in the emulated VRAM; and
@@ -218,7 +223,7 @@ Index: qemu-2.6.2/ui/surfman.c
 +
 +        //Compute the location of the QEMU buffer we want to copy /from/. This location
 +        //is only computed in terms of the rectangle's "offset" in the source image.
-+        uint8_t *src = ds_get_data(ds) + y * linesize + x * Bpp;
++        uint8_t *src = surface_data(ss->surface) + y * linesize + x * Bpp;
 +        unsigned int i;
 +
 +        surfman_debug("update vram:%#"HWADDR_PRIx" src:%p dest:%p %d,%d (%dx%d).",
@@ -241,47 +246,53 @@ Index: qemu-2.6.2/ui/surfman.c
 + */
 +static void surfman_lfb_state_save(struct SurfmanState *ss)
 +{
-+    struct DisplayState *ds = ss->ds;
-+
-+    ss->current.width = ds_get_width(ds);
-+    ss->current.height = ds_get_height(ds);
-+    ss->current.linesize = ds_get_linesize(ds);
-+    ss->current.format = surfman_get_format(ds_get_format(ds));
++    ss->current.width = surface_width(ss->surface);
++    ss->current.height = surface_height(ss->surface);
++    ss->current.linesize = surface_stride(ss->surface);
++    ss->current.format = surfman_get_format(surface_format(ss->surface));
 +    ss->current.addr = ss->vram->addr;
 +}
 +
 +/**
-+ * Returns a non-zero value iff the given DisplayState contains a different LFB configuration
++ * Returns a non-zero value iff the given DisplaySurface contains a different LFB configuration
 + * (i.e. size, format and/or address) than the LFB state provided.
 + */
-+static int surfman_lfb_state_compare(const struct lfb_state *s, struct DisplayState *ds)
++static int surfman_lfb_state_compare(const struct lfb_state *s)
 +{
 +    hwaddr lfb_addr;
 +
 +    //Determine the address of the LFB in VRAM. This is either the start of VRAM
 +    //(when the LFB is shared), or at an offset into VRAM when QEMU is performing its own rendering.
-+    lfb_addr = is_buffer_shared(ds->surface) ? ss->vram->addr : ss->vram->addr + HIDDEN_LFB_OFFSET;
++    lfb_addr = is_buffer_shared(ss->surface) ? ss->vram->addr : ss->vram->addr + HIDDEN_LFB_OFFSET;
 +
-+    //Determine if any of the DisplayState parameters differ from those of the known LFB.
-+    return !((s->width == ds_get_width(ds)) &&
-+             (s->height == ds_get_height(ds)) &&
-+             (s->linesize == ds_get_linesize(ds)) &&
-+             (s->format == surfman_get_format(ds_get_format(ds))) &&
++    //Determine if any of the DisplaySurface parameters differ from those of the known LFB.
++    return !((s->width == surface_width(ss->surface)) &&
++             (s->height == surface_height(ss->surface)) &&
++             (s->linesize == surface_stride(ss->surface)) &&
++             (s->format == surfman_get_format(surface_format(ss->surface))) &&
 +             (s->addr == lfb_addr));
 +}
 +
 +/**
-+ * Inform Surfman of a change in the framebuffer to be displayed. This handles cases in which the
-+ * framebuffer is moved, reformatted, or resized.
++ * Inform Surfman of a change in the surface/framebuffer to be displayed. This
++ * handles cases in which the framebuffer is moved, reformatted, or resized.
 + */
-+static void surfman_dpy_gfx_resize(struct DisplayState *ds)
++static void surfman_dpy_switch(DisplayChangeListener *dcl, DisplaySurface *new_surface)
 +{
 +    struct msg_display_resize msg;
 +    struct msg_empty_reply reply;
 +
++    if (!new_surface) {
++        /* Nothing to do, no new surface */
++        return;
++    }
++
++    /* Stash the new surface and do the rest of the update */
++    ss->surface = new_surface;
++
 +    //If Surfman is already correctly set up to display the relevant framebuffer,
 +    //skip sending it the RPC call; we're done!
-+    if (!surfman_lfb_state_compare(&ss->current, ds)) {
++    if (!surfman_lfb_state_compare(&ss->current)) {
 +        return;
 +    }
 +
@@ -294,14 +305,14 @@ Index: qemu-2.6.2/ui/surfman.c
 +    msg.DisplayID = 0;  /* Not supported anyway. */
 +
 +    //Include the LFB size...
-+    msg.width = ds_get_width(ds);
-+    msg.height = ds_get_height(ds);
-+    msg.linesize = ds_get_linesize(ds);
++    msg.width = surface_width(ss->surface);
++    msg.height = surface_height(ss->surface);
++    msg.linesize = surface_stride(ss->surface);
 +
 +    //... and pixel format. Note that we attempt to convert from a pixman pixelformat to a
 +    //surfman pixel format. This is a potentially lossy step, as Surfman does not support
 +    //certain color formats.
-+    msg.format = surfman_get_format(ds_get_format(ds));
++    msg.format = surfman_get_format(surface_format(ss->surface));
 +
 +    //If we weren't able to map the LFB's pixel format to a Surfman-supported format,
 +    //throw an error and abort. Ideally, we'd always convert the output to a surfman-supported
@@ -309,7 +320,7 @@ Index: qemu-2.6.2/ui/surfman.c
 +    //only advertise hardware support for Surfman-supported formats-- this should help to make
 +    //this an an exception, rather than a common case.Could not recover VRAM MemoryRegion
 +    if (!msg.format) {
-+        surfman_error("Unsupported pixel format `%#x'.", ds_get_format(ds));
++        surfman_error("Unsupported pixel format `%#x'.", surface_format(ss->surface));
 +        return;
 +    }
 +
@@ -322,7 +333,7 @@ Index: qemu-2.6.2/ui/surfman.c
 +    msg.fb_offset = 0;
 +
 +    //If the guest is performing the rendering, rather than having QEMU perform rendering...
-+    if (is_buffer_shared(ds->surface)) {
++    if (is_buffer_shared(ss->surface)) {
 +        //... then the LFB is accessible at the start of VRAM..
 +        msg.lfb_addr = ss->vram->addr;
 +
@@ -342,13 +353,14 @@ Index: qemu-2.6.2/ui/surfman.c
 +        msg.lfb_traceable = 0;
 +    }
 +
-+    //Log the change...
-+    surfman_info("resize %dx%d:%d -> %dx%d:%d%s %s %s.",
++    /*
++     * TODO removed have_text and have_gfx because they are private now. Not
++     * sure how important it was to trace them.
++     */
++    surfman_info("resize %dx%d:%d -> %dx%d:%d%s.",
 +                 ss->current.width, ss->current.height, ss->current.linesize,
 +                 msg.width, msg.height, msg.linesize,
-+                 msg.lfb_addr == ss->vram->addr ? " (shared)": "",
-+                 ds->have_text ? "have text" : "",
-+                 ds->have_gfx ? "have gfx" : "");
++                 msg.lfb_addr == ss->vram->addr ? " (shared)": "");
 +
 +    //... send our message to surfman via the device-management bus...
 +    dmbus_send(ss->dmbus_service, DMBUS_MSG_DISPLAY_RESIZE, &msg, sizeof (msg));
@@ -359,15 +371,6 @@ Index: qemu-2.6.2/ui/surfman.c
 +}
 +
 +/**
-+ * Notify Surfman of a change in the LFB address.
-+ * From Surfman's perspective, this is the same event as a resize; so we recycle that RPC.
-+ */
-+static void surfman_dpy_gfx_setdata(struct DisplayState *ds)
-+{
-+    surfman_dpy_gfx_resize(ds);
-+}
-+
-+/**
 + * Request the display size limitations (e.g. the maximum size that can be displayed on a monitor)
 + * from Surfman via the DMBUS. (Be careful: this call is synchonous, and thus should be called
 + * infrequently, lest we slow down the guest.)
@@ -375,20 +378,20 @@ Index: qemu-2.6.2/ui/surfman.c
 + * Note: If the VBE resolution patches are applied, this method is used to determine the
 + * "EDID-reported" resolution reported by the VGA Bios Extensions.
 + *
-+ * @param ds The current state of the display provider. (Not currently used)
++ * @param dcl The current DCL object of the display provider. (Not currently used)
 + * @param width_max, height_max If information about the maximum width/height is
 + *      available, these out-args will be updated.
 + * @param stride_alignment If information about the monitor's "stride" is avilable,
 + *      this out argument will be updated with the relevant alignment.
 + */
-+static void surfman_dpy_get_display_limits(DisplayState *ds,
++static void surfman_dpy_get_display_limits(DisplayChangeListener *dcl,
 +                                           unsigned int *width_max, unsigned int *height_max,
 +                                           unsigned int *stride_alignment)
 +{
 +    struct msg_display_get_info msg;
 +    struct msg_display_info reply;
 +
-+    (void) ds;
++    (void) dcl;
 +
 +    //Retreive the resolution of the first monitor.
 +    //FIXME: This should not use only the first monitor! Ideally, this should be replaced
@@ -414,36 +417,37 @@ Index: qemu-2.6.2/ui/surfman.c
 +static void surfman_on_reconnect(void *opaque)
 +{
 +    (void) opaque;
-+    surfman_dpy_gfx_resize(ss->ds);
++    /* Send the same surface object to get the update to occur */
++    surfman_dpy_switch(ss->dcl, ss->surface);
 +}
-+
-+//NOTE: The following functions are not implemened; instead, default display functions are used.
-+// -static void surfman_dpy_gfx_copy(struct DisplayState *s, int src_x, int src_y, int dst_x, int dst_y, int w, int h);
-+// -static void surfman_dpy_text_cursor(struct DisplayState *s, int x, int y);
-+// -static void surfman_dpy_text_resize(struct DisplayState *s, int w, int h);
-+// -static void surfman_dpy_text_update(struct DisplayState *s, int x, int y, int w, int h);Could not recover VRAM MemoryRegion
-+// -static void surfman_dpy_mouse_set(struct DisplayState *s, int x, int y, int on);
-+// -static void surfman_dpy_cursor_define(struct DisplayState *s, QEMUCursor *cursor);
 +
 +/**
 + * Set up the RPC connection so we're notified on a surfman reconnect.
 + * TODO: Additional RPC events should likely be handled, long term-- including resolution updates.
 + */
 +static struct dmbus_ops surfman_dmbus_ops = {
-+    .dom0_input_event = NULL,
-+    .dom0_input_pvm = NULL,
-+    .input_config = NULL,
++    .dom0_input_event   = NULL,
++    .dom0_input_pvm     = NULL,
++    .input_config       = NULL,
 +    .input_config_reset = NULL,
-+    .display_info = NULL,
-+    .display_edid = NULL,
-+    .reconnect = surfman_on_reconnect
++    .display_info       = NULL,
++    .display_edid       = NULL,
++    .reconnect          = surfman_on_reconnect
++};
++
++static const DisplayChangeListenerOps dcl_ops = {
++    .dpy_name               = "surfman",
++    .dpy_refresh            = surfman_dpy_refresh,
++    .dpy_gfx_update         = surfman_dpy_gfx_update,
++    .dpy_gfx_switch         = surfman_dpy_switch,
++    .dpy_get_display_limits = surfman_dpy_get_display_limits
 +};
 +
 +/**
 + * Initializes a Surfman multiplexed display, creating the DisplayChangeListener object
 + * that tracks display events.
 + */
-+void surfman_display_init(DisplayState *ds)
++void surfman_display_init(void)
 +{
 +    DisplayChangeListener *dcl;
 +
@@ -452,7 +456,6 @@ Index: qemu-2.6.2/ui/surfman.c
 +    //Create the SurfmanState "ss" object, which compartmentalizes the state of the Surfman
 +    //display plugin...
 +    ss = g_malloc0(sizeof (*ss));
-+    ss->ds = ds;
 +
 +    //... populate its internal reference to the guest's VRAM...
 +    //(Note again that this should not be used to get references to
@@ -477,14 +480,10 @@ Index: qemu-2.6.2/ui/surfman.c
 +
 +    //Finally, bind each of the actual display "change handlers"
 +    //that actually form the core display API.
-+    dcl = g_malloc0(sizeof (*dcl));
-+    dcl->idle = 0;
-+    dcl->dpy_refresh = surfman_dpy_refresh;
-+    dcl->dpy_gfx_update = surfman_dpy_gfx_update;
-+    dcl->dpy_gfx_resize = surfman_dpy_gfx_resize;
-+    dcl->dpy_gfx_setdata = surfman_dpy_gfx_setdata;
-+    dcl->dpy_get_display_limits = surfman_dpy_get_display_limits;
-+    register_displaychangelistener(ds, dcl);
++    dcl = g_new0(DisplayChangeListener, 1);
++    dcl->ops = &dcl_ops;
++    register_displaychangelistener(dcl);
++    ss->dcl = dcl;
 +
 +    return;
 +
@@ -497,14 +496,9 @@ Index: qemu-2.6.2/include/ui/surfman.h
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/include/ui/surfman.h
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,114 @@
 +#ifndef _SURFMAN_H_
 +# define _SURFMAN_H_
-+
-+#include "hw/xen.h"
-+#include "ui/console.h"
-+#include "xen-dmbus.h"
-+#include "exec/memory.h"
 +
 +#define SURFMAN_DEBUG 0
 +#define SURFMAN_FLAG "surfman-ui: "
@@ -531,7 +525,8 @@ Index: qemu-2.6.2/include/ui/surfman.h
 +    hwaddr addr;
 +};
 +struct SurfmanState {
-+    struct DisplayState *ds;
++    DisplaySurface *surface;
++    DisplayChangeListener *dcl;
 +    dmbus_service_t dmbus_service;
 +    MemoryRegion *vram;         // VRAM region hackishly recovered.
 +    uint8_t *vram_ptr;		// Pointer to the vram mapped in the mapcache.
@@ -651,7 +646,7 @@ Index: qemu-2.6.2/vl.c
 +#if defined(CONFIG_SURFMAN)
 +    case DT_SURFMAN:
          xen_input_init();
-+        surfman_display_init(ds);
++        surfman_display_init();
          break;
 +#endif
      default:
