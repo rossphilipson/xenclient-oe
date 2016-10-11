@@ -233,14 +233,14 @@ Index: qemu-2.6.2/net/net.c
  #include "qapi/string-output-visitor.h"
  
 +/* OpenXT: xenstore_register_nic() and xenstore_unregister_nic(). */
-+#include "hw/xen.h"
++#include "hw/xen/xen.h"
 +
  /* Net bridge is currently not supported for W32. */
  #if !defined(_WIN32)
  # define CONFIG_NET_BRIDGE
-@@ -305,6 +308,12 @@ NICState *qemu_new_nic(NetClientInfo *in
-         nic->ncs[i].queue_index = i;
-     }
+@@ -278,6 +281,12 @@ NetClientState *qemu_new_net_client(NetC
+     qemu_net_client_setup(nc, info, peer, model, name,
+                           qemu_net_client_destructor);
  
 +    /* OpenXT: Register the new NetClientState to Xenstore.
 +     * Required for link-state propagation logic. */
@@ -248,17 +248,18 @@ Index: qemu-2.6.2/net/net.c
 +        xenstore_register_nic(nc);
 +    }
 +
-     return nic;
+     return nc;
  }
  
-@@ -420,6 +429,10 @@ void qemu_del_nic(NICState *nic)
+@@ -336,6 +345,11 @@ static void qemu_cleanup_net_client(NetC
+ {
+     QTAILQ_REMOVE(&net_clients, nc, next);
  
-     for (i = queues - 1; i >= 0; i--) {
-         NetClientState *nc = qemu_get_subqueue(nic, i);
-+        /* OpenXT: Unregister NetClientState from Xenstore. */
-+        if (xen_enabled()) {
-+            xenstore_unregister_nic(nc);
-+        }
- 
-         qemu_cleanup_net_client(nc);
-         qemu_free_net_client(nc);
++    /* OpenXT: Unregister NetClientState from Xenstore. */
++    if (xen_enabled()) {
++        xenstore_unregister_nic(nc);
++    }
++
+     if (nc->info->cleanup) {
+         nc->info->cleanup(nc);
+     }
