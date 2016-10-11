@@ -113,7 +113,13 @@ Index: qemu-2.6.2/xen-changeiso.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/xen-changeiso.c
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,267 @@
++#include "qemu/osdep.h"
++#include "block/block.h"
++#include "sysemu/blockdev.h"
++#include "qemu/timer.h"
++#include "hw/xen/xen_backend.h"
++#include "qmp-commands.h"
 +#include "xen-changeiso.h"
 +
 +static QTAILQ_HEAD(IsoNodeHead, IsoNode) iso_list = QTAILQ_HEAD_INITIALIZER(iso_list);
@@ -379,7 +385,7 @@ Index: qemu-2.6.2/xen-changeiso.h
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/xen-changeiso.h
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,26 @@
 +#ifndef XEN_CHANGEISO__H
 +#define XEN_CHANGEISO__H
 +
@@ -387,12 +393,6 @@ Index: qemu-2.6.2/xen-changeiso.h
 + * Xenstore mechanism for informing a guest about changes in the media
 + * of a ISO backed CD-ROM drive within OpenXT
 + */
-+
-+#include "block/block.h"
-+#include "sysemu/blockdev.h"
-+#include "qemu/timer.h"
-+#include "hw/xen_backend.h"
-+#include "qmp-commands.h"
 +
 +#define BLKFRONT_READY_STATE "4"
 +#define STUBDOMID(x) (x+1)
