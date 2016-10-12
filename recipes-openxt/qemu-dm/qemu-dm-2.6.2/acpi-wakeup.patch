@@ -1,0 +1,118 @@
+Index: qemu-2.6.2/hw/acpi/Makefile.objs
+===================================================================
+--- qemu-2.6.2.orig/hw/acpi/Makefile.objs
++++ qemu-2.6.2/hw/acpi/Makefile.objs
+@@ -6,3 +6,4 @@ obj-$(CONFIG_ACPI_NVDIMM) += nvdimm.o
+ common-obj-$(CONFIG_ACPI) += acpi_interface.o
+ common-obj-$(CONFIG_ACPI) += bios-linker-loader.o
+ common-obj-$(CONFIG_ACPI) += aml-build.o
++common-obj-$(CONFIG_XEN) += openxt_ext.o
+Index: qemu-2.6.2/hw/acpi/openxt_ext.c
+===================================================================
+--- /dev/null
++++ qemu-2.6.2/hw/acpi/openxt_ext.c
+@@ -0,0 +1,83 @@
++#ifdef CONFIG_SYSLOG_LOGGING
++# include "logging.h"
++#else
++# include "stdio.h"
++#endif
++
++#include "sysemu/sysemu.h"
++#include "hw.h"
++#include "pc.h"
++#include "acpi.h"
++#include "hw/xen/xen.h"
++#include "hw/xen/xen_backend.h"
++
++/**
++ * ACPI_LOG: information to always log (errors & important low-volume events)
++ * @param fmt,... printf style arguments
++ */
++#define ACPI_LOG(fmt, ...)                                                   \
++    do {                                                                   \
++            fprintf(stdout, "[%s:%s:%d] " fmt,                             \
++                    __FILE__, __FUNCTION__, __LINE__, ##__VA_ARGS__);      \
++    } while (0)
++
++/**
++ * Event handler for OpenXT wakeup requests.
++ */
++static void openxt_wakeup_requested(void * unused)
++{
++    char domain_path[256];
++    int requested;
++
++    (void)unused;
++
++    // Determine the path that we'll be listening for wakeup events on.
++    snprintf(domain_path, sizeof(domain_path),
++             "/local/domain/%d", xen_domid);
++
++    // Check to see if a wakeup has been r
++    if(xenstore_read_int(domain_path, "wakeup-req", &requested) != 0)
++    {
++        ACPI_LOG("error: could not read the wakeup request node");
++        return;
++    }
++
++    //... if it has, wake up the guest.
++    if(requested)
++    {
++
++        // Clear the pending request...
++        xenstore_write_int(domain_path, "wakeup-req", 0);
++
++        // ... and issue our wakeup request!
++        if(runstate_check(RUN_STATE_SUSPENDED)) {
++            ACPI_LOG("QEMU: Waking device models from emulated S3.\n");
++            qemu_system_wakeup_request(QEMU_WAKEUP_REASON_OTHER);
++        }
++    }
++}
++
++/**
++ * Register a watcher to handle OpenXT wakeup requests.
++ */
++void openxt_register_wakeup_listener(void)
++{
++    char domain_path[256];
++
++    // Ensure that our connection to the XenStore has been set up.
++    xenstore_generic_init();
++
++    // Determine the path that we'll be listening for wakeup events on.
++    snprintf(domain_path, sizeof(domain_path),
++             "/local/domain/%d", xen_domid);
++
++    // Create an emtpy wakeup-request node, as a hint that we're listening
++    // for wakeup requests.
++    xenstore_write_int(domain_path, "wakeup-req", 0);
++
++    //... and register an watch for the given node.
++    if (xenstore_add_watch(domain_path, "wakeup-req",
++          openxt_wakeup_requested, (void *) -1 )) {
++        ACPI_LOG("error: failed to register watch for domain wakeup\n");
++    }
++}
+Index: qemu-2.6.2/hw/acpi/core.c
+===================================================================
+--- qemu-2.6.2.orig/hw/acpi/core.c
++++ qemu-2.6.2/hw/acpi/core.c
+@@ -63,6 +63,8 @@ struct acpi_table_header {
+ #define SLP_TYP_S3_V1     (1)
+ #define SLP_TYP_S5_V1     (0)
+ 
++extern void openxt_register_wakeup_listener(void);
++
+ static const char unsigned dfl_hdr[ACPI_TABLE_HDR_SIZE - ACPI_TABLE_PFX_SIZE] =
+     "QEMU\0\0\0\0\1\0"       /* sig (4), len(4), revno (1), csum (1) */
+     "QEMUQEQEMUQEMU\1\0\0\0" /* OEM id (6), table (8), revno (4) */
+@@ -606,6 +608,7 @@ void acpi_pm1_cnt_update(ACPIREGS *ar,
+     /* ACPI specs 3.0, 4.7.2.5 */
+     if (sci_enable) {
+         ar->pm1.cnt.cnt |= ACPI_BITMASK_SCI_ENABLE;
++        openxt_register_wakeup_listener();
+     } else if (sci_disable) {
+         ar->pm1.cnt.cnt &= ~ACPI_BITMASK_SCI_ENABLE;
+     }
