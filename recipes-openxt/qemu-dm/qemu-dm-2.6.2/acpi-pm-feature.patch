@@ -1,0 +1,100 @@
+Index: qemu-2.6.2/hw/xen/Makefile.objs
+===================================================================
+--- qemu-2.6.2.orig/hw/xen/Makefile.objs
++++ qemu-2.6.2/hw/xen/Makefile.objs
+@@ -4,3 +4,4 @@ common-obj-$(CONFIG_XEN_BACKEND) += xen_
+ obj-$(CONFIG_XEN_PCI_PASSTHROUGH) += xen-host-pci-device.o
+ obj-$(CONFIG_XEN_PCI_PASSTHROUGH) += xen_pt.o xen_pt_config_init.o xen_pt_graphics.o xen_pt_msi.o
+ obj-$(CONFIG_XEN) += xenmou.o
++obj-$(CONFIG_XEN) += xen_acpi_pm.o
+Index: qemu-2.6.2/hw/acpi/core.c
+===================================================================
+--- qemu-2.6.2.orig/hw/acpi/core.c
++++ qemu-2.6.2/hw/acpi/core.c
+@@ -730,15 +730,24 @@ void acpi_send_gpe_event(ACPIREGS *ar, q
+ 
+ void acpi_update_sci(ACPIREGS *regs, qemu_irq irq)
+ {
+-    int sci_level, pm1a_sts;
++    int pm1a_level, gpe_level, pm1a_sts;
+ 
+     pm1a_sts = acpi_pm1_evt_get_sts(regs);
+ 
+-    sci_level = ((pm1a_sts &
+-                  regs->pm1.evt.en & ACPI_BITMASK_PM1_COMMON_ENABLED) != 0) ||
+-                ((regs->gpe.sts[0] & regs->gpe.en[0]) != 0);
++    pm1a_level = ((pm1a_sts &
++                   regs->pm1.evt.en & ACPI_BITMASK_PM1_COMMON_ENABLED) != 0);
+ 
+-    qemu_set_irq(irq, sci_level);
++    /*
++     * The OSPM sets the EN bits depending on the _Lxx methods (there are no
++     * _Exx methods) it finds in the GPE scope.
++     */
++    gpe_level = (((regs->epe.sts[0] & regs->gpe.en[0]) != 0) ||
++                 ((regs->gpe.sts[1] & regs->gpe.en[1]) != 0));
++
++    if (pm1a_level || gpe_level)
++        qemu_irq_raise(irq);
++    else
++        qemu_irq_lower(irq);
+ 
+     /* schedule a timer interruption if needed */
+     acpi_pm_tmr_update(regs,
+Index: qemu-2.6.2/hw/acpi/piix4.c
+===================================================================
+--- qemu-2.6.2.orig/hw/acpi/piix4.c
++++ qemu-2.6.2/hw/acpi/piix4.c
+@@ -455,6 +455,11 @@ static void piix4_pm_realize(PCIDevice *
+     /* APM */
+     apm_init(dev, &s->apm, apm_ctrl_changed, s);
+ 
++    /* OpenXT: battery/AC/lid devices */
++    if (xen_enabled() && xen_acpi_pm_get_enabled()) {
++        xen_acpi_pm_create(pci_address_space_io(dev), s);
++    }
++
+     /* OpenXT: Enable ACPI, QEMU doesn't enable it by default */
+     apm_ctrl_changed(ACPI_ENABLE, s);
+ 
+@@ -548,6 +553,7 @@ static void gpe_writeb(void *opaque, hwa
+     PIIX4PMState *s = opaque;
+ 
+     acpi_gpe_ioport_writeb(&s->ar, addr, val);
++    xen_acpi_pm_gpe_ioport_writeb(s->ar.gpe.len, addr, val);
+     acpi_update_sci(&s->ar, s->irq);
+ 
+     PIIX4_DPRINTF("gpe write %" HWADDR_PRIx " <== %" PRIu64 "\n", addr, val);
+@@ -563,6 +569,32 @@ static const MemoryRegionOps piix4_gpe_o
+     .endianness = DEVICE_LITTLE_ENDIAN,
+ };
+ 
++void piix4_pm_set_gpe_sts_raise_sci(void *opaque, uint8_t bit)
++{
++    PIIX4PMState *s = opaque;
++    bool update = false;
++
++    /* N. B. concerning the mechanism for asserting and de-asserting the SCI.
++     * When GPE or PM1 STS bits are set, pm_update_sci() will raise an SCI (in
++     * these cases level interrupt). The OSPM will then clear the particular
++     * STS bits which is effectively EOI. Subsequent calls to pm_update_sci()
++     * with no STS bits set, e.g. after the bits are written in gpe_writeb(),
++     * will lower the SCI. */
++    if ((bit < 8)&&(s->ar.gpe.en[0] & (1 << bit))) {
++        s->ar.gpe.sts[0] |= (1 << bit);
++        update = true;
++    }
++    else if ((bit < 16)&&(s->ar.gpe.en[1] & (1 << (bit - 8)))) {
++        s->ar.gpe.sts[1] |= (1 << (bit - 8));
++        update = true;
++    }
++
++    if (update)
++        acpi_update_sci(s);
++
++    PIIX4_DPRINTF("sts raise sci %x\n", bits);
++}
++
+ static void piix4_acpi_system_hot_add_init(MemoryRegion *parent,
+                                            PCIBus *bus, PIIX4PMState *s)
+ {
