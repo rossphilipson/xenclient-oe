@@ -8,7 +8,6 @@ FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}-${PV_MAJOR}.${PV_MINOR}.${PV_MICRO}
 
 require qemu-dm.inc
 
-# TODO Add back later
-#EXTRA_OECONF += " --audio-drv-list=alsa --enable-openxt-iso "
+EXTRA_OECONF += " --audio-drv-list=alsa --enable-openxt-iso "
 
 PR = "${INC_PR}.6"

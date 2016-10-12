@@ -13,7 +13,6 @@ SRC_URI += " \
             file://qemu-ifup-stubdom \
             "
 
-# TODO Add back later
 EXTRA_OECONF += " --audio-drv-list=openxt --enable-openxt-stubdom --enable-openxt-iso "
 
 do_install_append(){
