@@ -174,7 +174,7 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/xen/xen_acpi_pm.c
-@@ -0,0 +1,1049 @@
+@@ -0,0 +1,1053 @@
 +/*
 + * APCI PM feature for battery/AC/lid management for OpenXT guests.
 + *
@@ -313,6 +313,8 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 +    uint8_t not_present_mode;        /* AC/battery not present mode */
 +    MemoryRegion mr;                 /* General ACPI MemoryRegion to register IO ops */
 +} XenACPIPMState;
++
++#define XEN_ACPI_PM(obj) OBJECT_CHECK(XenACPIPMState, (obj), TYPE_XEN_ACPI_PM)
 +
 +/* -------/ Enable /-------------------------------------------------------- */
 +
@@ -892,7 +894,7 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 +    int i;
 +
 +    for (i = 0; (NULL != opsTab[i].name); i++) {
-+        memory_region_init_io(&s->xbm.mr[i], opsTab[i].ops,
++        memory_region_init_io(&s->xbm.mr[i], OBJECT(s), opsTab[i].ops,
 +                              &s->xbm, opsTab[i].name, opsTab[i].size);
 +        memory_region_add_subregion(s->space_io, opsTab[i].base,
 +                                    &s->xbm.mr[i]);
@@ -984,7 +986,7 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 +
 +static void xen_acpi_pm_register_port(XenACPIPMState *s)
 +{
-+    memory_region_init_io(&s->mr, &port_sts_ops, s, "acpi-pm-sts", 1);
++    memory_region_init_io(&s->mr, OBJECT(s), &port_sts_ops, s, "acpi-pm-sts", 1);
 +    memory_region_add_subregion(s->space_io, ACPI_PM_STATUS_PORT, &s->mr);
 +}
 +
@@ -1114,9 +1116,9 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 +
 +/* -------/ Initialization /------------------------------------------------ */
 +
-+static int xen_acpi_pm_initfn(SysBusDevice *dev)
++static int xen_acpi_pm_initfn(SysBusDevice *sbd)
 +{
-+    XenACPIPMState *s = FROM_SYSBUS(XenACPIPMState, dev);
++    XenACPIPMState *s = XEN_ACPI_PM(sbd);
 +    int i;
 +
 +    /*
@@ -1193,13 +1195,15 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 +void xen_acpi_pm_create(MemoryRegion *space_io, void *opaque)
 +{
 +    DeviceState *dev;
++    SysBusDevice *sbd;
 +    XenACPIPMState *s;
 +
-+    dev = qdev_create(NULL, "xen-acpi-pm");
-+    s = DO_UPCAST(XenACPIPMState, busdev.qdev, dev);
++    dev = qdev_create(NULL, TYPE_XEN_ACPI_PM);
++    qdev_init_nofail(dev);
++    sbd = SYS_BUS_DEVICE(dev);
++    s = XEN_ACPI_PM(sbd);
 +    s->space_io = space_io;
 +    s->piix4_dev = opaque;
-+    qdev_init_nofail(dev);
 +}
 +
 +static void xen_acpi_pm_class_init(ObjectClass *klass, void *data)
@@ -1212,7 +1216,7 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 +}
 +
 +static const TypeInfo xen_acpi_pm_info = {
-+    .name = "xen-acpi-pm",
++    .name = TYPE_XEN_ACPI_PM,
 +    .parent = TYPE_SYS_BUS_DEVICE,
 +    .instance_size = sizeof(XenACPIPMState),
 +    .class_init = xen_acpi_pm_class_init,
@@ -1228,7 +1232,7 @@ Index: qemu-2.6.2/include/hw/xen/xen_acpi_pm.h
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/include/hw/xen/xen_acpi_pm.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,43 @@
 +/*
 + * APCI PM feature for battery/AC/lid management for OpenXT guests.
 + *
@@ -1252,6 +1256,8 @@ Index: qemu-2.6.2/include/hw/xen/xen_acpi_pm.h
 +
 +#ifndef XEN_ACPI_PM_H_
 +#define XEN_ACPI_PM_H_
++
++#define TYPE_XEN_ACPI_PM "xen-acpi-pm"
 +
 +/*
 + * This function is use for the initialization of the battery/AC/lid devices.
