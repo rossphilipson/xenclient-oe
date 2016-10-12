@@ -31,7 +31,7 @@ Index: qemu-2.6.2/hw/acpi/core.c
 +     * The OSPM sets the EN bits depending on the _Lxx methods (there are no
 +     * _Exx methods) it finds in the GPE scope.
 +     */
-+    gpe_level = (((regs->epe.sts[0] & regs->gpe.en[0]) != 0) ||
++    gpe_level = (((regs->gpe.sts[0] & regs->gpe.en[0]) != 0) ||
 +                 ((regs->gpe.sts[1] & regs->gpe.en[1]) != 0));
 +
 +    if (pm1a_level || gpe_level)
@@ -45,7 +45,15 @@ Index: qemu-2.6.2/hw/acpi/piix4.c
 ===================================================================
 --- qemu-2.6.2.orig/hw/acpi/piix4.c
 +++ qemu-2.6.2/hw/acpi/piix4.c
-@@ -455,6 +455,11 @@ static void piix4_pm_realize(PCIDevice *
+@@ -39,6 +39,7 @@
+ #include "hw/acpi/memory_hotplug.h"
+ #include "hw/acpi/acpi_dev_interface.h"
+ #include "hw/xen/xen.h"
++#include "hw/xen/xen_acpi_pm.h"
+ 
+ //#define DEBUG
+ 
+@@ -455,6 +456,11 @@ static void piix4_pm_realize(PCIDevice *
      /* APM */
      apm_init(dev, &s->apm, apm_ctrl_changed, s);
  
@@ -57,7 +65,7 @@ Index: qemu-2.6.2/hw/acpi/piix4.c
      /* OpenXT: Enable ACPI, QEMU doesn't enable it by default */
      apm_ctrl_changed(ACPI_ENABLE, s);
  
-@@ -548,6 +553,7 @@ static void gpe_writeb(void *opaque, hwa
+@@ -548,6 +554,7 @@ static void gpe_writeb(void *opaque, hwa
      PIIX4PMState *s = opaque;
  
      acpi_gpe_ioport_writeb(&s->ar, addr, val);
@@ -65,7 +73,7 @@ Index: qemu-2.6.2/hw/acpi/piix4.c
      acpi_update_sci(&s->ar, s->irq);
  
      PIIX4_DPRINTF("gpe write %" HWADDR_PRIx " <== %" PRIu64 "\n", addr, val);
-@@ -563,6 +569,32 @@ static const MemoryRegionOps piix4_gpe_o
+@@ -563,6 +570,32 @@ static const MemoryRegionOps piix4_gpe_o
      .endianness = DEVICE_LITTLE_ENDIAN,
  };
  
@@ -75,9 +83,9 @@ Index: qemu-2.6.2/hw/acpi/piix4.c
 +    bool update = false;
 +
 +    /* N. B. concerning the mechanism for asserting and de-asserting the SCI.
-+     * When GPE or PM1 STS bits are set, pm_update_sci() will raise an SCI (in
++     * When GPE or PM1 STS bits are set, acpi_update_sci() will raise an SCI (in
 +     * these cases level interrupt). The OSPM will then clear the particular
-+     * STS bits which is effectively EOI. Subsequent calls to pm_update_sci()
++     * STS bits which is effectively EOI. Subsequent calls to acpi_update_sci()
 +     * with no STS bits set, e.g. after the bits are written in gpe_writeb(),
 +     * will lower the SCI. */
 +    if ((bit < 8)&&(s->ar.gpe.en[0] & (1 << bit))) {
@@ -90,7 +98,7 @@ Index: qemu-2.6.2/hw/acpi/piix4.c
 +    }
 +
 +    if (update)
-+        pm_update_sci(s);
++        acpi_update_sci(&s->ar, s->irq);
 +
 +    PIIX4_DPRINTF("sts raise sci %x\n", bits);
 +}
@@ -166,7 +174,7 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/xen/xen_acpi_pm.c
-@@ -0,0 +1,1048 @@
+@@ -0,0 +1,1049 @@
 +/*
 + * APCI PM feature for battery/AC/lid management for OpenXT guests.
 + *
@@ -194,13 +202,14 @@ Index: qemu-2.6.2/hw/xen/xen_acpi_pm.c
 + */
 +
 +#include <stdint.h>
++#include "qemu/osdep.h"
 +#include "include/qemu-common.h"
-+#include "xen_backend.h"
-+#include "xen.h"
-+#include "sysbus.h"
++#include "hw/sysbus.h"
++#include "hw/xen/xen_backend.h"
++#include "hw/xen/xen.h"
 +#include "pci/pci.h"
-+#include "hw/pc.h"
-+#include "hw/xen_acpi_pm.h"
++#include "hw/i386/pc.h"
++#include "hw/xen/xen_acpi_pm.h"
 +
 +/* Uncomment the following line to have debug messages about
 + * Battery Management */
