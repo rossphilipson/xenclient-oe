@@ -11,7 +11,8 @@ Index: qemu-2.6.2/hw/acpi/openxt_ext.c
 ===================================================================
 --- /dev/null
 +++ qemu-2.6.2/hw/acpi/openxt_ext.c
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,86 @@
++#include "qemu/osdep.h"
 +#ifdef CONFIG_SYSLOG_LOGGING
 +# include "logging.h"
 +#else
@@ -19,9 +20,11 @@ Index: qemu-2.6.2/hw/acpi/openxt_ext.c
 +#endif
 +
 +#include "sysemu/sysemu.h"
-+#include "hw.h"
-+#include "pc.h"
-+#include "acpi.h"
++#include "hw/hw.h"
++#include "hw/i386/pc.h"
++#include "hw/acpi/acpi.h"
++#include "qemu/config-file.h"
++#include "qapi-event.h"
 +#include "hw/xen/xen.h"
 +#include "hw/xen/xen_backend.h"
 +
@@ -74,7 +77,7 @@ Index: qemu-2.6.2/hw/acpi/openxt_ext.c
 +/**
 + * Register a watcher to handle OpenXT wakeup requests.
 + */
-+void openxt_register_wakeup_listener(void)
++void acpi_openxt_register_wakeup_listener(void)
 +{
 +    char domain_path[256];
 +
@@ -99,20 +102,22 @@ Index: qemu-2.6.2/hw/acpi/core.c
 ===================================================================
 --- qemu-2.6.2.orig/hw/acpi/core.c
 +++ qemu-2.6.2/hw/acpi/core.c
-@@ -63,6 +63,8 @@ struct acpi_table_header {
- #define SLP_TYP_S3_V1     (1)
- #define SLP_TYP_S5_V1     (0)
- 
-+extern void openxt_register_wakeup_listener(void);
-+
- static const char unsigned dfl_hdr[ACPI_TABLE_HDR_SIZE - ACPI_TABLE_PFX_SIZE] =
-     "QEMU\0\0\0\0\1\0"       /* sig (4), len(4), revno (1), csum (1) */
-     "QEMUQEQEMUQEMU\1\0\0\0" /* OEM id (6), table (8), revno (4) */
-@@ -606,6 +608,7 @@ void acpi_pm1_cnt_update(ACPIREGS *ar,
+@@ -606,6 +606,7 @@ void acpi_pm1_cnt_update(ACPIREGS *ar,
      /* ACPI specs 3.0, 4.7.2.5 */
      if (sci_enable) {
          ar->pm1.cnt.cnt |= ACPI_BITMASK_SCI_ENABLE;
-+        openxt_register_wakeup_listener();
++        acpi_openxt_register_wakeup_listener();
      } else if (sci_disable) {
          ar->pm1.cnt.cnt &= ~ACPI_BITMASK_SCI_ENABLE;
      }
+Index: qemu-2.6.2/include/hw/acpi/acpi.h
+===================================================================
+--- qemu-2.6.2.orig/include/hw/acpi/acpi.h
++++ qemu-2.6.2/include/hw/acpi/acpi.h
+@@ -201,4 +201,6 @@ struct AcpiSlicOem {
+ };
+ int acpi_get_slic_oem(AcpiSlicOem *oem);
+ 
++void acpi_openxt_register_wakeup_listener(void);
++
+ #endif /* !QEMU_HW_ACPI_H */
