@@ -32,6 +32,7 @@ SRC_URI += "file://compile-time-stubdom-flag.patch \
             file://acpi-pm-feature.patch \
             file://maintain-time-offset.patch \
             file://acpi-wakeup.patch \
+            file://qmp-v4v-char-driver.patch \
             file://openxt-misc-fixes.patch \
             "
 SRC_URI[md5sum] = "bdf1f3d0c177ebeb35a079a4bc3fc74e"
