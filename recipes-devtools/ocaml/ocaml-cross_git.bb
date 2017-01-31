@@ -11,7 +11,9 @@ SRC_URI = "git://${OPENXT_GIT_MIRROR}/ocaml.git;protocol=${OPENXT_GIT_PROTOCOL};
            file://0007-Fix-ocamlopt-w.r.t.-binutils-2.21.patch;patch=1 \
 	   file://config.patch \
            file://remove-absolute-linker-path-from-lib.patch \
+           file://segfault-with-lazy-empty-array.patch \
            file://finaliser-on-weak-array-gives-dangling-pointers.patch \
+           file://crash-when-finalising-lazy-values-of-the-wrong-type.patch \
 "
 
 inherit xenclient
