@@ -1,0 +1,29 @@
+commit 74694a0b0462fdfb1a7323426eb14db719d84c6d
+Author: Damien Doligez <damien.doligez-inria.fr>
+Date:   Tue Mar 6 19:17:29 2012 +0000
+
+    PR#5518: segfault with lazy empty array
+    
+    git-svn-id: http://caml.inria.fr/svn/ocaml/trunk@12194 f963ae5c-01c2-4b8c-9fe0-0dff7051ff02
+
+Index: git/byterun/minor_gc.c
+===================================================================
+--- git.orig/byterun/minor_gc.c
++++ git/byterun/minor_gc.c
+@@ -160,9 +160,14 @@ void caml_oldify_one (value v, value *p)
+ 
+         Assert (tag == Forward_tag);
+         if (Is_block (f)){
+-          vv = Is_in_value_area(f);
+-          if (vv) {
++          if (Is_young (f)){
++            vv = 1;
+             ft = Tag_val (Hd_val (f) == 0 ? Field (f, 0) : f);
++          }else{
++            vv = Is_in_value_area(f);
++            if (vv){
++              ft = Tag_val (f);
++            }
+           }
+         }
+         if (!vv || ft == Forward_tag || ft == Lazy_tag || ft == Double_tag){

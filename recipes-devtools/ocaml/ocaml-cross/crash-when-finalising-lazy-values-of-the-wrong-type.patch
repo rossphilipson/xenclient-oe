@@ -1,0 +1,24 @@
+commit 3d89f3ef7e65dd3b05a0f6f19c83800a1d8f9661
+Author: Damien Doligez <damien.doligez-inria.fr>
+Date:   Wed Mar 4 19:58:49 2015 +0000
+
+    PR#6664: Crash when finalising lazy values of the wrong type.
+    
+    git-svn-id: http://caml.inria.fr/svn/ocaml/trunk@15876 f963ae5c-01c2-4b8c-9fe0-0dff7051ff02
+
+Index: git/byterun/finalise.c
+===================================================================
+--- git.orig/byterun/finalise.c
++++ git/byterun/finalise.c
+@@ -209,7 +209,10 @@ void caml_final_empty_young (void)
+ /* Put (f,v) in the recent set. */
+ CAMLprim value caml_final_register (value f, value v)
+ {
+-  if (!(Is_block (v) && Is_in_heap_or_young(v))) {
++  if (!Is_block (v)
++        || !Is_in_heap_or_young(v)
++        || Tag_val (v) == Lazy_tag
++        || Tag_val (v) == Double_tag) {
+     caml_invalid_argument ("Gc.finalise");
+   }
+   Assert (old <= young);
