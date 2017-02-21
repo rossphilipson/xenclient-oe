@@ -1,8 +1,8 @@
-diff --git a/dbus_stubs.c b/dbus_stubs.c
-index c4d0745..9cacb77 100644
---- a/dbus_stubs.c
-+++ b/dbus_stubs.c
-@@ -1042,7 +1042,7 @@ static void message_append_basic(DBusMessageIter *iter, int c_type, value v)
+Index: ocaml-dbus-0.30/dbus_stubs.c
+===================================================================
+--- ocaml-dbus-0.30.orig/dbus_stubs.c
++++ ocaml-dbus-0.30/dbus_stubs.c
+@@ -1143,7 +1143,7 @@ static void message_append_basic(DBusMes
  		}
  	case DBUS_TYPE_OBJECT_PATH:
  	case DBUS_TYPE_STRING: {
