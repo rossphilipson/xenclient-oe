@@ -1,20 +1,20 @@
-diff --git a/dbus_stubs.c b/dbus_stubs.c
-index ae3f208..8500f38 100644
---- a/dbus_stubs.c
-+++ b/dbus_stubs.c
-@@ -573,7 +573,7 @@ value stub_dbus_connection_dispatch(value bus)
- 	DBusDispatchStatus status;
- 
+Index: ocaml-dbus-0.30/dbus_stubs.c
+===================================================================
+--- ocaml-dbus-0.30.orig/dbus_stubs.c
++++ ocaml-dbus-0.30/dbus_stubs.c
+@@ -637,7 +637,7 @@ value stub_dbus_connection_dispatch(valu
  	status = dbus_connection_dispatch(DBusConnection_val(bus));
+ 	caml_enter_blocking_section();
+ 
 -	caml_alloc_variant(ret, Val_int(find_index_equal(status, __dispatch_status_table)));
 +	caml_alloc_variant(ret, find_index_equal(status, __dispatch_status_table));
  	CAMLreturn(ret);
  }
  
-@@ -584,7 +584,7 @@ value stub_dbus_connection_get_dispatch_status(value bus)
- 	DBusDispatchStatus status;
- 
+@@ -651,7 +651,7 @@ value stub_dbus_connection_get_dispatch_
  	status = dbus_connection_get_dispatch_status(DBusConnection_val(bus));
+ 	caml_leave_blocking_section();
+ 
 -	caml_alloc_variant(ret, Val_int(find_index_equal(status, __dispatch_status_table)));
 +	caml_alloc_variant(ret, find_index_equal(status, __dispatch_status_table));
  	CAMLreturn(ret);
