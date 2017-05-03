@@ -1,0 +1,28 @@
+Index: vgabios-0.7a/vbe.c
+===================================================================
+--- vgabios-0.7a.orig/vbe.c
++++ vgabios-0.7a/vbe.c
+@@ -1043,7 +1043,7 @@ Bit16u *AX;Bit16u CX; Bit16u ES;Bit16u D
+ #ifdef PCI_VID
+                 lfb_addr = pci_get_lfb_addr(PCI_VID);
+ #else
+-                lfb_addr = pci_get_lfb_addr(0x1234); // experimental vendor
++                lfb_addr = pci_get_lfb_addr(0x5853); // experimental vendor
+ #endif
+                 if (lfb_addr > 0) {
+                   info.PhysBasePtr = ((Bit32u)lfb_addr << 16);
+Index: vgabios-0.7a/vgabios.c
+===================================================================
+--- vgabios-0.7a.orig/vgabios.c
++++ vgabios-0.7a/vgabios.c
+@@ -248,8 +248,8 @@ vgabios_pci_data:
+ .word PCI_VID
+ .word PCI_DID
+ #elif defined(VBE)
+-.word 0x1234
+-.word 0x1111 // Bochs VBE support
++.word 0x5853
++.word 0xC101 // Bochs VBE support
+ #else
+ #error "Unknown PCI vendor and device id"
+ #endif
