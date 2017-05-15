@@ -86,6 +86,7 @@ SRC_URI_append = " \
     file://xsa-202-x86-pv-guests-may-be-able-to-mask-interrupts.patch \
     file://xsa-203-x86-missing-null-pointer-check-in-vmfunc-emulation.patch \
     file://xsa-204-x86-mishandling-of-syscall-singlestep-during-emulation.patch \
+    file://tboot-xen-evtlog-support.patch \
 "
 
 COMPATIBLE_HOST = 'i686-oe-linux|(x86_64.*).*-linux|aarch64.*-linux'
